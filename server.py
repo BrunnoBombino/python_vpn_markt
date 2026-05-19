@@ -1,12 +1,13 @@
 import requests
 import json
+import auth
 
 
 class VPN:
     def __init__(self) -> None:
-        login = 'Galas'
-        password = 'Galakhov23418'
-        self.host = 'https://85.192.40.149:19045/6QIM0PTGPA5RjE2oKi'
+        login = auth.login
+        password = auth.password
+        self.host = auth.host
         self.header = []
         self.login_data = {"username": login, "password": password}
         self.ses = requests.Session()
