@@ -25,8 +25,23 @@ class VPN:
         user_list = self.ses.get(f"{self.host}/panel/api/inbounds/list").json()
         return user_list
 
+    def add_user(self, username, remark):
+        pass
+
+    def del_user(self, user):
+        pass
+
+    def update_user(self, user):
+        pass
+
+    def check_user(self, user):
+        pass
+
 
 vpn = VPN()
 test = vpn.test_connection()
 all_users = vpn.users()
 vpn.save_json_data(all_users, "users.json")
+
+
+
