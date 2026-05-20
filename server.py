@@ -45,3 +45,5 @@ vpn.save_json_data(all_users, "users.json")
 
 
 
+#vless://bfac5d50-3bbf-4b19-bd58-d0c53abe0957@85.192.40.149:20671?type=tcp&encryption=none&security=reality&pbk=WjNgpbCRz71oIQAy20CG_drYBKASzuszKsFKKuQJ3yc&fp=chrome&sni=www.icloud.com&sid=b28b7c3e68fc95&spx=%2F#test-t9mhlvqr
+#vless://bfac5d50-3bbf-4b19-bd58-d0c53abe0957@85.192.40.149:20671?type=tcp&security=reality&pbk=WjNgpbCRz71oIQAy20CG_drYBKASzuszKsFKKuQJ3yc&fp=chrome&sni=www.icloud.com&sid=b28b7c3e68fc95&spx=%2F#test-t9mhlvqr
