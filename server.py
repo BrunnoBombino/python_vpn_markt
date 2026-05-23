@@ -241,6 +241,7 @@ class VPN:
         if new_username:
             client_data["email"] = new_username
         if new_uuid:
+            new_uuid = str(uuid.uuid1())
             client_data["id"] = new_uuid
 
         # Добавляем дни к текущему остатку
@@ -275,7 +276,7 @@ class VPN:
             if add_days:
                 final_date = datetime.fromtimestamp(client_data["expiryTime"] / 1000, tz=timezone.utc)
                 print(f"📅 Новая дата отключения: {final_date.strftime('%Y-%m-%d %H:%M:%S')} UTC")
-            return True
+            return client_data
         else:
             print(f"❌ Ошибка API при обновлении: {response.text}")
             return False
