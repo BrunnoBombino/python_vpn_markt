@@ -38,9 +38,4 @@ class VPN:
         pass
 
 
-vpn = VPN()
-test = vpn.test_connection()
-all_users = vpn.users()
-vpn.save_json_data(all_users, "users.json")
-
 
