@@ -13,3 +13,4 @@ if response.status_code != 200:
 inbounds = response.json().get("obj", [])
 for inbound in inbounds:
     print(f"ibound - {inbound.get("remark")}, id - {inbound.get("id")}")
+
