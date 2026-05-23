@@ -1,6 +1,8 @@
+import time
+
 from server import VPN
 
 vpn = VPN()
-vpn.connect()
-vpn.connect()
 vpn.add_user(username="Serge", remark="VIP", days=0)
+time.sleep(20)
+vpn.del_user(username="Serge", remark="VIP")

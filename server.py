@@ -91,6 +91,11 @@ class VPN:
         return None
 
     def add_user(self, username, remark, days):
+        # 1. Проверяем/восстанавливаем сессию подключения
+        if not self.connect():
+            print("❌ Отмена операции: нет связи с API")
+            return False
+
         if remark != "VIP":
             now = datetime.now(timezone.utc) # Текущее время (UTC)
             expiry_date = now + timedelta(days=days) # Дата отключения (UTC)
@@ -122,18 +127,67 @@ class VPN:
         }
 
         # Отправляем запрос в API
-        response = self.ses.post(f"{self.host}/panel/api/inbounds/addClient", json=payload)
+        url = f"{self.host}/panel/api/inbounds/addClient"
+        response = self.ses.post(url, json=payload)
 
         if response.status_code == 200 and response.json().get("success"):
             print(f"✅ Пользователь {username} добавлен на {days} дней.")
             print(f"UUID: {client_uuid}")
             return response.json()
         else:
-            print(f"❌ Ошибка API: {response.text}")
+            print(f"❌ Ошибка API: {response.json().get('msg')}")
             return None
 
-    def del_user(self, user):
-        pass
+    def del_user(self, username, remark):
+        # Проверяем/восстанавливаем сессию подключения
+        if not self.connect():
+            print("❌ Отмена операции: нет связи с API")
+            return False
+
+        # Получаем актуальный список инбаундов
+        inbounds_data = self.users()
+        if not inbounds_data.get("success"):
+            print("❌ Не удалось получить список инбаундов")
+            return False
+
+        inbound_id = None
+        client_uuid = None
+
+        # Ищем инбаунд по названию и парсим его клиентов в поиске нужного UUID
+        for inbound in inbounds_data.get("obj", []):
+            if inbound.get("remark") == remark:
+                inbound_id = inbound.get("id")
+                try:
+                    settings = json.loads(inbound.get("settings", "{}"))
+                    for client in settings.get("clients", []):
+                        if client.get("email") == username:
+                            client_uuid = client.get("id")
+                            break
+                except Exception as e:
+                    print(f"⚠️ Ошибка чтения настроек инбаунда: {e}")
+                break
+
+        # Проверяем, нашли ли мы всё необходимое
+        if inbound_id is None:
+            print(f"❌ Подключение (inbound) с названием '{remark}' не найдено!")
+            return False
+
+        if client_uuid is None:
+            print(f"❌ Пользователь '{username}' не найден внутри инбаунда '{remark}'!")
+            return False
+
+        # Отправляем POST-запрос на эндпоинт удаления
+        url = f"{self.host}/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}"
+
+        response = self.ses.post(url)
+
+        if response.status_code == 200 and response.json().get("success"):
+            print(f"🗑️ Пользователь {username} (UUID: {client_uuid}) успешно удален из '{remark}'.")
+            return True
+        else:
+            print(response)
+            print(f"❌ Ошибка API при удалении: {response.text}")
+            return False
 
     def update_user(self, user):
         pass
