@@ -610,3 +610,118 @@ class VPN:
         except Exception as e:
             print(f"💥 Критическая ошибка сети при сбросе трафика: {e}")
             return False
+
+    def get_client_link(self, username, server_ip_or_domain=None):
+        """
+        Генерирует готовую ссылку подключения (vless://, vmess:// и т.д.) для клиента.
+
+        :param username: Email (имя) пользователя
+        :param server_ip_or_domain: (Опционально) Домен или IP вашего сервера.
+                                    Если не указан, скрипт автоматически вырежет его из self.host.
+        """
+        from urllib.parse import urlparse, quote
+
+        # 1. Получаем общую информацию о пользователе (его UUID и инбаунд)
+        user_info = self.check_user(username)
+        if not user_info:
+            return None
+
+        inbound_id = user_info["inbound_id"]
+        client_uuid = user_info["uuid"]
+        protocol = user_info["protocol"].lower()  # vless, vmess, trojan, shadowsocks
+
+        # Если IP/домен сервера не передан, вытаскиваем его из базового URL панели
+        if not server_ip_or_domain:
+            parsed_host = urlparse(self.host)
+            server_ip_or_domain = parsed_host.hostname
+
+        # 2. Получаем сырые данные инбаундов, чтобы прочитать streamSettings (настройки сети)
+        inbounds_data = self.users()
+        target_inbound = None
+        for inbound in inbounds_data.get("obj", []):
+            if inbound.get("id") == inbound_id:
+                target_inbound = inbound
+                break
+
+        if not target_inbound:
+            print("❌ Не удалось получить технические настройки инбаунда.")
+            return None
+
+        port = target_inbound.get("port")
+
+        # Парсим streamSettings и settings самого инбаунда
+        stream_settings = json.loads(target_inbound.get("streamSettings", "{}"))
+        inbound_settings = json.loads(target_inbound.get("settings", "{}"))
+
+        network = stream_settings.get("network", "tcp")  # tcp, grpc, ws
+        security = stream_settings.get("security", "none")  # reality, tls, none
+
+        # Название ссылки в приложении (отобразится у клиента в приложении)
+        link_remark = quote(f"{username}@{user_info['inbound_remark']}")
+
+        # 3. СЦЕНАРИЙ ДЛЯ VLESS
+        if protocol == "vless":
+            # Базовая часть ссылки
+            link = f"vless://{client_uuid}@{server_ip_or_domain}:{port}?type={network}&security={security}"
+
+            # Настройки Reality
+            if security == "reality":
+                reality_settings = stream_settings.get("realitySettings", {})
+                # Вытаскиваем публичный ключ и настройки маскировки
+                public_key = reality_settings.get("publicKey", "")
+                short_id = reality_settings.get("shortIds", [""])[0] if reality_settings.get("shortIds") else ""
+
+                # Берем первый доступный SNI (сервер маскировки)
+                server_names = reality_settings.get("serverNames", [""])
+                sni = server_names[0] if server_names else ""
+
+                # Узнаем тип flow (xtls-rprx-vision) из настроек конкретного клиента
+                flow = ""
+                for client in inbound_settings.get("clients", []):
+                    if client.get("email") == username:
+                        flow = client.get("flow", "")
+                        break
+
+                link += f"&sni={sni}&pbk={public_key}"
+                if flow:
+                    link += f"&flow={flow}"
+                if short_id:
+                    link += f"&sid={short_id}"
+
+            # Настройки транспортного уровня (gRPC / WebSocket)
+            if network == "grpc":
+                grpc_settings = stream_settings.get("grpcSettings", {})
+                service_name = grpc_settings.get("serviceName", "")
+                link += f"&serviceName={service_name}"
+            elif network == "ws":
+                ws_settings = stream_settings.get("wsSettings", {})
+                path = ws_settings.get("path", "/")
+                link += f"&path={quote(path)}"
+
+            # Добавляем текстовую метку в самый конец
+            link += f"#{link_remark}"
+            return link
+
+        # 4. СЦЕНАРИЙ ДЛЯ TROJAN
+        elif protocol == "trojan":
+            link = f"trojan://{client_uuid}@{server_ip_or_domain}:{port}?type={network}&security={security}"
+            if security in ["tls", "reality"]:
+                link += f"&sni={stream_settings.get('tlsSettings', {}).get('serverName', '')}"
+            link += f"#{link_remark}"
+            return link
+
+        # 5. СЦЕНАРИЙ ДЛЯ SHADOWSOCKS
+        elif protocol == "shadowsocks":
+            # Для Shadowsocks пароль и метод шифрования кодируются в base64
+            import base64
+            method = inbound_settings.get("method", "aes-256-gcm")
+            # Панель использует формат 'метод:пароль'
+            config_str = f"{method}:{client_uuid}"
+            encoded_config = base64.b64encode(config_str.encode('utf-8')).decode('utf-8')
+
+            link = f"ss://{encoded_config}@{server_ip_or_domain}:{port}#{link_remark}"
+            return link
+
+        else:
+            print(f"⚠️ Протокол {protocol} пока не поддерживается автоматическим генератором ссылок.")
+            return None
