@@ -1,6 +1,7 @@
 import requests
 import json
 import auth
+from datetime import datetime, timezone, timedelta
 
 
 class VPN:
@@ -19,14 +20,22 @@ class VPN:
             
     def test_connection(self):
         response = self.ses.post(f"{self.host}/login", data=self.login_data)
-        return response
+        if response.status_code == 200 and response.json().get("success"):
+            return True
+        raise Exception(f"Ошибка авторизации: {response.text}")
 
     def users(self):
         user_list = self.ses.get(f"{self.host}/panel/api/inbounds/list").json()
         return user_list
 
-    def add_user(self, username, remark):
-        pass
+    def add_user(self, username, remark, days):
+        now = datetime.now(timezone.utc) # Текущее время (UTC)
+        expiry_date = now + timedelta(days=days) # Дата отключения (UTC)
+        expiry_time_ms = int(expiry_date.timestamp() * 1000) # Значение для API
+
+        inbound_list = self.ses.get(f"{self.host}/panel/api/inbounds/list").json()
+        print(inbound_list)
+
 
     def del_user(self, user):
         pass
@@ -38,5 +47,9 @@ class VPN:
         pass
 
 
+
+vpn = VPN()
+vpn.test_connection()
+vpn.add_user(username="brunno", remark="limit", days=10)
 
 

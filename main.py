@@ -12,5 +12,5 @@ if response.status_code != 200:
     raise Exception(f"Не удалось получить Inbound list {response.text}")
 inbounds = response.json().get("obj", [])
 for inbound in inbounds:
-    print(f"ibound - {inbound.get("remark")}, id - {inbound.get("id")}")
+    print(f"inbound - {inbound.get("remark")}, id - {inbound.get("id")}")
 
