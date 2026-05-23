@@ -91,12 +91,46 @@ class VPN:
         return None
 
     def add_user(self, username, remark, days):
-        now = datetime.now(timezone.utc) # Текущее время (UTC)
-        expiry_date = now + timedelta(days=days) # Дата отключения (UTC)
-        expiry_time_ms = int(expiry_date.timestamp() * 1000) # Значение для API
+        if remark != "VIP":
+            now = datetime.now(timezone.utc) # Текущее время (UTC)
+            expiry_date = now + timedelta(days=days) # Дата отключения (UTC)
+            expiry_time_ms = int(expiry_date.timestamp() * 1000) # Значение для API
+        else:
+            expiry_time_ms = 0
 
         inbound_id = self.find_inbound_id_by_remark(remark) # Находим ID нужного inbound
 
+        client_uuid = str(uuid.uuid1())
+
+        # Формируем структуру настроек
+        client_settings = {
+            "clients": [{
+                "id": client_uuid,
+                "alterId": 0,
+                "email": username,
+                "totalGB": 0,
+                "expiryTime": expiry_time_ms,
+                "enable": True,
+                "tgId": "",
+                "subId": "",
+                "limitIp": 0
+            }]
+        }
+        payload = {
+            "id": inbound_id,
+            "settings": json.dumps(client_settings)  # Используем стандартный json из вашего импорта
+        }
+
+        # Отправляем запрос в API
+        response = self.ses.post(f"{self.host}/panel/api/inbounds/addClient", json=payload)
+
+        if response.status_code == 200 and response.json().get("success"):
+            print(f"✅ Пользователь {username} добавлен на {days} дней.")
+            print(f"UUID: {client_uuid}")
+            return response.json()
+        else:
+            print(f"❌ Ошибка API: {response.text}")
+            return None
 
     def del_user(self, user):
         pass
@@ -106,4 +140,3 @@ class VPN:
 
     def check_user(self, user):
         pass
-
