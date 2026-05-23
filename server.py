@@ -506,8 +506,107 @@ class VPN:
 
         return len(failed_blocks) == 0
 
-    def check_user_by_username(self, username):
-        pass
+    def check_user(self, username):
+        """
+        Получает точную информацию о пользователе, используя массив clientStats
+        для корректного отображения трафика и времени.
+        """
+        if not self.connect():
+            print("❌ Отмена операции: нет связи с API")
+            return None
 
-    def check_user_by_uuid(self, user_uuid):
-        pass
+        inbounds_data = self.users()
+        if not inbounds_data.get("success"):
+            print("❌ Не удалось получить список инбаундов")
+            return None
+
+        # Перебираем все инбаунды на сервере
+        for inbound in inbounds_data.get("obj", []):
+            remark_name = inbound.get("remark")
+            inbound_id = inbound.get("id")
+            protocol = inbound.get("protocol", "unknown")
+
+            # 1. Сначала ищем статистику трафика в массиве clientStats этого инбаунда
+            client_stats_list = inbound.get("clientStats", [])
+            user_stats = None
+
+            for stat in client_stats_list:
+                if stat.get("email") == username:
+                    user_stats = stat
+                    break
+
+            # Если нашли статистику пользователя в этом инбаунде, забираем точные данные
+            if user_stats:
+                # Извлекаем данные из clientStats (как в вашем JSON)
+                up_bytes = user_stats.get("up", 0)
+                down_bytes = user_stats.get("down", 0)
+                total_bytes_limit = user_stats.get("total", 0)  # Лимит трафика
+                expiry_time_ms = user_stats.get("expiryTime", 0)  # Срок действия
+                uuid = user_stats.get("uuid", "")
+                is_enabled = user_stats.get("enable", False)
+
+                # Переводим байты в Гигабайты (1 ГБ = 1024^3 байт)
+                gb_factor = 1024 ** 3
+                used_gb = (up_bytes + down_bytes) / gb_factor
+                limit_gb = total_bytes_limit / gb_factor if total_bytes_limit > 0 else "Безлимит"
+
+                # Обрабатываем временную метку окончания
+                if expiry_time_ms == 0:
+                    expiry_date_str = "Вечный аккаунт"
+                else:
+                    expiry_date = datetime.fromtimestamp(expiry_time_ms / 1000, tz=timezone.utc)
+                    expiry_date_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+
+                # Формируем итоговый правильный ответ
+                return {
+                    "username": username,
+                    "inbound_remark": remark_name,
+                    "inbound_id": inbound_id,
+                    "uuid": uuid,
+                    "is_enabled": is_enabled,
+                    "used_traffic_gb": round(used_gb, 2),
+                    "limit_traffic_gb": round(limit_gb, 2) if isinstance(limit_gb, (int, float)) else limit_gb,
+                    "expiry_date": expiry_date_str,
+                    "protocol": protocol
+                }
+
+        print(f"❌ Пользователь '{username}' не найден на сервере.")
+        return None
+
+    def reset_traffic(self, username):
+        """
+        Обнуляет счетчики использованного трафика (up и down) для конкретного пользователя.
+        """
+        if not self.connect():
+            print("❌ Отмена операции: нет связи с API")
+            return False
+
+        # 1. Сначала нам нужно узнать, в каком инбаунде находится пользователь,
+        # чтобы получить inbound_id. Используем метод check_user.
+        user_info = self.check_user(username)
+
+        if not user_info:
+            print(f"❌ Не удалось сбросить трафик: пользователь '{username}' не найден.")
+            return False
+
+        inbound_id = user_info["inbound_id"]
+        inbound_remark = user_info["inbound_remark"]
+
+        # 2. Формируем URL для сброса трафика.
+        # Панель ожидает ID инбаунда в пути и email клиента в конце.
+        url = f"{self.host}/panel/api/inbounds/{inbound_id}/resetClientTraffic/{username}"
+
+        try:
+            response = self.ses.post(url, timeout=10)
+
+            if response.status_code == 200 and response.json().get("success"):
+                print(
+                    f"🔄 Счетчики трафика для пользователя '{username}' в инбаунде '{inbound_remark}' успешно сброшены на 0.")
+                return True
+            else:
+                print(f"❌ Ошибка API при сбросе трафика: {response.text}")
+                return False
+
+        except Exception as e:
+            print(f"💥 Критическая ошибка сети при сбросе трафика: {e}")
+            return False
