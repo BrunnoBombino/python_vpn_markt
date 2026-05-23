@@ -283,14 +283,14 @@ class VPN:
 
     def change_inbound(self, username, current_remark, new_remark):
         """
-        Переносит клиента из одного инбаунда в другой по названию.
-        Если новый инбаунд называется 'VIP', клиенту выдается безлимит.
+        Абсолютно безопасный перенос клиента с предварительной проверкой занятости имени
+        и бэкапом данных в текстовый файл на случай критического сбоя.
         """
         if not self.connect():
             print("❌ Отмена операции: нет связи с API")
             return False
 
-        # Получаем актуальный список всех инбаундов
+        # 1. Получаем список всех инбаундов
         inbounds_data = self.users()
         if not inbounds_data.get("success"):
             print("❌ Не удалось получить список инбаундов")
@@ -298,25 +298,28 @@ class VPN:
 
         client_data = None
         new_inbound_id = None
+        new_inbound_settings = None
 
-        # Ищем данные клиента в текущем инбаунде и одновременно ищем ID нового инбаунда
+        # 2. Собираем данные
         for inbound in inbounds_data.get("obj", []):
-            # Ищем текущего клиента
             if inbound.get("remark") == current_remark:
                 try:
                     settings = json.loads(inbound.get("settings", "{}"))
                     for client in settings.get("clients", []):
                         if client.get("email") == username:
-                            client_data = client.copy()  # Копируем настройки
+                            client_data = client.copy()
                             break
                 except Exception as e:
                     print(f"⚠️ Ошибка парсинга старого инбаунда: {e}")
 
-            # Ищем целевой инбаунд
             if inbound.get("remark") == new_remark:
                 new_inbound_id = inbound.get("id")
+                try:
+                    new_inbound_settings = json.loads(inbound.get("settings", "{}"))
+                except Exception as e:
+                    print(f"⚠️ Ошибка парсинга нового инбаунда: {e}")
 
-        # Проверки перед выполнением
+        # 3. Проверки существования
         if client_data is None:
             print(f"❌ Пользователь '{username}' не найден в инбаунде '{current_remark}'!")
             return False
@@ -327,35 +330,81 @@ class VPN:
             print(f"ℹ️ Пользователь '{username}' уже находится в инбаунде '{new_remark}'.")
             return True
 
-        # ПРОВЕРКА НА VIP: Если переносим в VIP, делаем подписку безлимитной
+        # 4. ЗАЩИТА: Проверяем тезку в целевом инбаунде
+        if new_inbound_settings:
+            for client in new_inbound_settings.get("clients", []):
+                if client.get("email") == username:
+                    print(f"❌ ОШИБКА: В инбаунде '{new_remark}' уже есть пользователь '{username}'!")
+                    print("🛡️ Операция отменена. Старый пользователь НЕ удален.")
+                    return False
+
+        # 5. ПРОВЕРКА НА VIP: Сброс лимитов
         if new_remark.upper() == "VIP":
             print(f"⭐ Обнаружен перенос в VIP! Сбрасываем лимиты для {username}...")
-            client_data["expiryTime"] = 0  # Безлимит по времени
-            client_data["totalGB"] = 0  # Безлимит по трафику
+            client_data["expiryTime"] = 0
+            client_data["totalGB"] = 0
 
-        # Сначала УДАЛЯЕМ клиента из старого инбаунда
+        # === НАЧАЛО БЛОКА БЕЗОПАСНОСТИ И БЭКАПА ===
+        backup_filename = "backup_lost_users.txt"
+        backup_entry = f"=== BACKUP {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n" \
+                       f"User: {username}\n" \
+                       f"Target Inbound Remark: {new_remark}\n" \
+                       f"Target Inbound ID: {new_inbound_id}\n" \
+                       f"Data: {json.dumps(client_data)}\n" \
+                       f"=====================================\n\n"
+
+        # Создаем экстренную запись в файле ДО удаления
+        try:
+            with open(backup_filename, "a", encoding="utf-8") as f:
+                f.write(backup_entry)
+            print(f"📝 Создан аварийный бэкап пользователя в файл {backup_filename}")
+        except Exception as e:
+            print(f"⚠️ Предупреждение: Не удалось записать файл бэкапа ({e}), но продолжаем...")
+        # ==========================================
+
+        # 6. Удаляем клиента из старого подключения
         print(f"🗑️ Удаляем клиента из старого подключения '{current_remark}'...")
         if not self.del_user(username, current_remark):
             print("❌ Ошибка: не удалось удалить клиента из старого инбаунда. Перенос прерван.")
+            # Чистить бэкап не нужно, так как пользователь остался в старом инбаунде, файл просто зафиксировал попытку
             return False
 
-        # ДОБАВЛЯЕМ клиента в новый инбаунд
+        # 7. Добавляем клиента в новый инбаунд
         payload = {
             "id": new_inbound_id,
             "settings": json.dumps({"clients": [client_data]})
         }
 
-        response = self.ses.post(f"{self.host}/panel/api/inbounds/addClient", json=payload)
+        try:
+            response = self.ses.post(f"{self.host}/panel/api/inbounds/addClient", json=payload, timeout=10)
+            success = response.status_code == 200 and response.json().get("success")
+        except Exception as e:
+            success = False
+            print(f"💥 Критическая ошибка сети при добавлении: {e}")
 
-        # Проверяем результат переноса
-        if response.status_code == 200 and response.json().get("success"):
+        if success:
             print(f"🚀 Пользователь '{username}' успешно перенесен в инбаунд '{new_remark}'!")
-            if new_remark.upper() == "VIP":
-                print("♾️ Тариф изменен на: Бессрочный Безлимит.")
+
+            # === УДАЛЯЕМ БЭКАП ПРИ УСПЕХЕ ===
+            # Читаем файл, удаляем нашу запись и перезаписываем обратно
+            try:
+                if os.path.exists(backup_filename):
+                    with open(backup_filename, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    # Стираем именно этот блок записи
+                    content = content.replace(backup_entry, "")
+                    with open(backup_filename, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    print("🧹 Аварийный бэкап успешно удален (перенос завершен штатно).")
+            except Exception as e:
+                print(f"⚠️ Не удалось очистить файл бэкапа: {e}")
+            # ===============================
             return True
         else:
-            print(f"❌ Ошибка API при добавлении в новый инбаунд: {response.text}")
-            print("⚠️ ВНИМАНИЕ: Пользователь уже удален из старого инбаунда!")
+            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось добавить клиента в новый инбаунд!")
+            print(f"🚨 Срочно проверьте файл '{backup_filename}' для восстановления данных вручную или скриптом.")
+            if 'response' in locals():
+                print(f"Ответ сервера: {response.text}")
             return False
 
     def check_user_by_username(self, username):
