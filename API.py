@@ -91,7 +91,7 @@ class API:
                 return inbound.get("id")
         return None
 
-    def add_user(self, username, remark, days):
+    def add_user(self, username, remark, days=0):
         # 1. Проверяем/восстанавливаем сессию подключения
         if not self.connect():
             print("❌ Отмена операции: нет связи с API")
@@ -666,23 +666,34 @@ class API:
 
             # Настройки Reality
             if security == "reality":
-                reality_settings = stream_settings.get("realitySettings", {})
-                # Вытаскиваем публичный ключ и настройки маскировки
-                public_key = reality_settings.get("publicKey", "")
-                short_id = reality_settings.get("shortIds", [""])[0] if reality_settings.get("shortIds") else ""
+                # В 3x-ui объект может называться realitySettings или reality_settings
+                reality_settings = stream_settings.get("realitySettings", stream_settings.get("reality_settings", {}))
 
-                # Берем первый доступный SNI (сервер маскировки)
+                # Ищем публичный ключ (проверяем все возможные варианты названия ключа в API)
+                public_key = reality_settings.get("publicKey", reality_settings.get("public_key", ""))
+
+                # Если ключ пустой, проверяем, возможно он лежит в под-объекте settings
+                if not public_key and "settings" in reality_settings:
+                    public_key = reality_settings["settings"].get("publicKey",
+                                                                  reality_settings["settings"].get("public_key", ""))
+
+                # Получаем shortId
+                short_ids = reality_settings.get("shortIds", [""])
+                short_id = short_ids[0] if (short_ids and len(short_ids) > 0) else ""
+
+                # Получаем SNI (сервер маскировки) и очищаем от лишних символов
                 server_names = reality_settings.get("serverNames", [""])
-                sni = server_names[0] if server_names else ""
+                sni = server_names[0] if (server_names and len(server_names) > 0) else ""
 
-                # Узнаем тип flow (xtls-rprx-vision) из настроек конкретного клиента
+                # Узнаем тип flow (xtls-rprx-vision) из настроек клиента
                 flow = ""
                 for client in inbound_settings.get("clients", []):
                     if client.get("email") == username:
                         flow = client.get("flow", "")
                         break
 
-                link += f"&sni={sni}&pbk={public_key}"
+                # Собираем параметры Reality (Hiddifi критичен к кодированию SNI)
+                link += f"&sni={quote(sni)}&pbk={public_key}"
                 if flow:
                     link += f"&flow={flow}"
                 if short_id:
@@ -690,15 +701,15 @@ class API:
 
             # Настройки транспортного уровня (gRPC / WebSocket)
             if network == "grpc":
-                grpc_settings = stream_settings.get("grpcSettings", {})
+                grpc_settings = stream_settings.get("grpcSettings", stream_settings.get("grpc_settings", {}))
                 service_name = grpc_settings.get("serviceName", "")
-                link += f"&serviceName={service_name}"
+                link += f"&serviceName={quote(service_name)}"
             elif network == "ws":
-                ws_settings = stream_settings.get("wsSettings", {})
+                ws_settings = stream_settings.get("wsSettings", stream_settings.get("ws_settings", {}))
                 path = ws_settings.get("path", "/")
                 link += f"&path={quote(path)}"
 
-            # Добавляем текстовую метку в самый конец
+            # Добавляем имя профиля для Hiddifi
             link += f"#{link_remark}"
             return link
 
