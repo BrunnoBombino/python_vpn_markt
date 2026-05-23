@@ -281,7 +281,82 @@ class VPN:
             print(f"❌ Ошибка API при обновлении: {response.text}")
             return False
 
+    def change_inbound(self, username, current_remark, new_remark):
+        """
+        Переносит клиента из одного инбаунда в другой по названию.
+        Если новый инбаунд называется 'VIP', клиенту выдается безлимит.
+        """
+        if not self.connect():
+            print("❌ Отмена операции: нет связи с API")
+            return False
 
+        # Получаем актуальный список всех инбаундов
+        inbounds_data = self.users()
+        if not inbounds_data.get("success"):
+            print("❌ Не удалось получить список инбаундов")
+            return False
+
+        client_data = None
+        new_inbound_id = None
+
+        # Ищем данные клиента в текущем инбаунде и одновременно ищем ID нового инбаунда
+        for inbound in inbounds_data.get("obj", []):
+            # Ищем текущего клиента
+            if inbound.get("remark") == current_remark:
+                try:
+                    settings = json.loads(inbound.get("settings", "{}"))
+                    for client in settings.get("clients", []):
+                        if client.get("email") == username:
+                            client_data = client.copy()  # Копируем настройки
+                            break
+                except Exception as e:
+                    print(f"⚠️ Ошибка парсинга старого инбаунда: {e}")
+
+            # Ищем целевой инбаунд
+            if inbound.get("remark") == new_remark:
+                new_inbound_id = inbound.get("id")
+
+        # Проверки перед выполнением
+        if client_data is None:
+            print(f"❌ Пользователь '{username}' не найден в инбаунде '{current_remark}'!")
+            return False
+        if new_inbound_id is None:
+            print(f"❌ Целевой инбаунд '{new_remark}' не найден на сервере!")
+            return False
+        if current_remark == new_remark:
+            print(f"ℹ️ Пользователь '{username}' уже находится в инбаунде '{new_remark}'.")
+            return True
+
+        # ПРОВЕРКА НА VIP: Если переносим в VIP, делаем подписку безлимитной
+        if new_remark.upper() == "VIP":
+            print(f"⭐ Обнаружен перенос в VIP! Сбрасываем лимиты для {username}...")
+            client_data["expiryTime"] = 0  # Безлимит по времени
+            client_data["totalGB"] = 0  # Безлимит по трафику
+
+        # Сначала УДАЛЯЕМ клиента из старого инбаунда
+        print(f"🗑️ Удаляем клиента из старого подключения '{current_remark}'...")
+        if not self.del_user(username, current_remark):
+            print("❌ Ошибка: не удалось удалить клиента из старого инбаунда. Перенос прерван.")
+            return False
+
+        # ДОБАВЛЯЕМ клиента в новый инбаунд
+        payload = {
+            "id": new_inbound_id,
+            "settings": json.dumps({"clients": [client_data]})
+        }
+
+        response = self.ses.post(f"{self.host}/panel/api/inbounds/addClient", json=payload)
+
+        # Проверяем результат переноса
+        if response.status_code == 200 and response.json().get("success"):
+            print(f"🚀 Пользователь '{username}' успешно перенесен в инбаунд '{new_remark}'!")
+            if new_remark.upper() == "VIP":
+                print("♾️ Тариф изменен на: Бессрочный Безлимит.")
+            return True
+        else:
+            print(f"❌ Ошибка API при добавлении в новый инбаунд: {response.text}")
+            print("⚠️ ВНИМАНИЕ: Пользователь уже удален из старого инбаунда!")
+            return False
 
     def check_user_by_username(self, username):
         pass
