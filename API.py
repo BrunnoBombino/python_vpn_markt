@@ -661,29 +661,29 @@ class API:
 
         # 3. СЦЕНАРИЙ ДЛЯ VLESS
         if protocol == "vless":
-            # Базовая часть ссылки
-            link = f"vless://{client_uuid}@{server_ip_or_domain}:{port}?type={network}&security={security}"
+            # Базовая часть ссылки (добавлен параметр encryption=none)
+            link = f"vless://{client_uuid}@{server_ip_or_domain}:{port}?type={network}&encryption=none&security={security}"
 
             # Настройки Reality
             if security == "reality":
-                # В 3x-ui объект может называться realitySettings или reality_settings
                 reality_settings = stream_settings.get("realitySettings", stream_settings.get("reality_settings", {}))
 
-                # Ищем публичный ключ (проверяем все возможные варианты названия ключа в API)
+                # Ищем публичный ключ
                 public_key = reality_settings.get("publicKey", reality_settings.get("public_key", ""))
-
-                # Если ключ пустой, проверяем, возможно он лежит в под-объекте settings
                 if not public_key and "settings" in reality_settings:
                     public_key = reality_settings["settings"].get("publicKey",
                                                                   reality_settings["settings"].get("public_key", ""))
 
-                # Получаем shortId
+                # Получаем shortId (вытаскиваем первый элемент из списка, без скобок)
                 short_ids = reality_settings.get("shortIds", [""])
                 short_id = short_ids[0] if (short_ids and len(short_ids) > 0) else ""
 
-                # Получаем SNI (сервер маскировки) и очищаем от лишних символов
+                # Получаем SNI (вытаскиваем первый элемент из списка)
                 server_names = reality_settings.get("serverNames", [""])
                 sni = server_names[0] if (server_names and len(server_names) > 0) else ""
+
+                # Извлекаем Fingerprint (fp). По умолчанию в 3x-ui это chrome
+                fp = reality_settings.get("fingerprint", "chrome")
 
                 # Узнаем тип flow (xtls-rprx-vision) из настроек клиента
                 flow = ""
@@ -692,12 +692,16 @@ class API:
                         flow = client.get("flow", "")
                         break
 
-                # Собираем параметры Reality (Hiddifi критичен к кодированию SNI)
-                link += f"&sni={quote(sni)}&pbk={public_key}"
+                # Собираем параметры строго в порядке оригинальной панели
+                # Обратите внимание: SNI не кодируем через quote, так как панель вставляет его «как есть»
                 if flow:
                     link += f"&flow={flow}"
+                link += f"&pbk={public_key}&fp={fp}&sni={sni}"
                 if short_id:
                     link += f"&sid={short_id}"
+
+                # Панель жестко дописывает параметр spx=%2F для Reality
+                link += "&spx=%2F"
 
             # Настройки транспортного уровня (gRPC / WebSocket)
             if network == "grpc":
@@ -709,8 +713,11 @@ class API:
                 path = ws_settings.get("path", "/")
                 link += f"&path={quote(path)}"
 
-            # Добавляем имя профиля для Hiddifi
+            # Форматируем комментарий в конце как в панели: НазваниеИнбаунда-ИмяПользователя
+            # Панель НЕ кодирует этот текст через URL-escape, пишем напрямую
+            link_remark = f"{user_info['inbound_remark']}-{username}"
             link += f"#{link_remark}"
+
             return link
 
         # 4. СЦЕНАРИЙ ДЛЯ TROJAN

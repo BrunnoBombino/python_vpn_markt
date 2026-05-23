@@ -43,7 +43,7 @@ from API import API
 #     print("==================================================\n")
 
 api = API()
-api.add_user(username="Brunno", remark="VIP")
+#api.add_user(username="Brunno", remark="VIP")
 # Генерируем ссылку. Скрипт сам подставит IP вашего сервера 85.192.40.149 из настроек хоста
 config_link = api.get_client_link("Brunno")
 
