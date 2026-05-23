@@ -1,5 +1,6 @@
 import os
 import pickle
+import time
 import uuid
 import requests
 import json
@@ -17,9 +18,9 @@ class VPN:
         self.ses = requests.Session()
 
         # Автоматически загружаем старые куки, если файл существует
-        self.load_cookies()
+        self._load_cookies()
 
-    def save_cookies(self):
+    def _save_cookies(self):
         """Сохраняет куки сессии в файл"""
         try:
             with open(self.cookie_file, "wb") as f:
@@ -28,7 +29,7 @@ class VPN:
         except Exception as e:
             print(f"⚠️ Не удалось сохранить куки: {e}")
 
-    def load_cookies(self):
+    def _load_cookies(self):
         """Загружает куки сессии из файла, если он есть"""
         if os.path.exists(self.cookie_file):
             try:
@@ -38,7 +39,7 @@ class VPN:
             except Exception as e:
                 print(f"⚠️ Ошибка чтения файла сессии: {e}")
 
-    def is_connected(self) -> bool:
+    def _is_connected(self) -> bool:
         """Проверяет, жива ли текущая сессия API"""
         try:
             response = self.ses.get(f"{self.host}/panel/api/inbounds/list", timeout=5)
@@ -50,7 +51,7 @@ class VPN:
 
     def connect(self) -> bool:
         """Проверяет старую сессию и делает логин только при необходимости"""
-        if self.is_connected():
+        if self._is_connected():
             print("🔄 Сессия активна, повторный вход не требуется.")
             return True
 
@@ -59,7 +60,7 @@ class VPN:
             response = self.ses.post(f"{self.host}/login", data=self.login_data, timeout=5)
             if response.status_code == 200 and response.json().get("success"):
                 print("🔓 Успешная авторизация!")
-                self.save_cookies()  # Сохраняем новые куки после успешного входа
+                self._save_cookies()  # Сохраняем новые куки после успешного входа
                 return True
 
             print(f"❌ Ошибка авторизации: {response.text}")
@@ -286,6 +287,12 @@ class VPN:
         Абсолютно безопасный перенос с учетом глобальной уникальности email в 3x-ui.
         Проверяет, что имя свободно во ВСЕЙ панели перед деструктивными действиями.
         """
+
+        # Очищаем пробелы
+        username = username.strip()
+        current_remark = current_remark.strip()
+        new_remark = new_remark.strip()
+
         if not self.connect():
             print("❌ Отмена операции: нет связи с API")
             return False
@@ -366,7 +373,6 @@ class VPN:
         if not self.del_user(username, current_remark):
             print("❌ Ошибка удаления. Перенос прерван.")
             return False
-
         # Создание на новом месте
         payload = {
             "id": new_inbound_id,
@@ -403,7 +409,6 @@ class VPN:
         Сканирует файл бэкапа и пытается автоматически восстановить
         всех пользователей, застрявших во время неудачного переноса.
         """
-        import os
         if not os.path.exists(backup_filename) or os.path.getsize(backup_filename) == 0:
             print("📅 Файл бэкапа пуст или отсутствует. Восстановление не требуется.")
             return True
