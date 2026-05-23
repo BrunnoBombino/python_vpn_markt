@@ -237,6 +237,50 @@ class VPN:
         # Сохраняем старый UUID, так как он нужен для URL-адреса запроса
         old_uuid = client_data["id"]
 
+        # Применяем изменения, если они переданы
+        if new_username:
+            client_data["email"] = new_username
+        if new_uuid:
+            client_data["id"] = new_uuid
+
+        # Добавляем дни к текущему остатку
+        if add_days is not None:
+            current_expiry = client_data.get("expiryTime", 0)
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+            # Если аккаунт безлимитный (0) или подписка уже истекла, считаем от текущего момента
+            if current_expiry <= now_ms:
+                base_time = datetime.now(timezone.utc)
+            else:
+                base_time = datetime.fromtimestamp(current_expiry / 1000, tz=timezone.utc)
+
+            new_expiry_date = base_time + timedelta(days=add_days)
+            client_data["expiryTime"] = int(new_expiry_date.timestamp() * 1000)
+
+
+        # Формируем payload для отправки
+        # Панель ожидает структуру {"clients": [измененный_объект_клиента]}
+        payload = {
+            "id": inbound_id,
+            "settings": json.dumps({"clients": [client_data]})
+        }
+
+        # Отправляем POST-запрос, указывая старый UUID в пути, чтобы панель нашла нужную запись
+        url = f"{self.host}/panel/api/inbounds/updateClient/{old_uuid}"
+        response = self.ses.post(url, json=payload)
+
+        # 5. Проверяем результат
+        if response.status_code == 200 and response.json().get("success"):
+            print(f"✅ Данные пользователя '{username}' успешно обновлены.")
+            if add_days:
+                final_date = datetime.fromtimestamp(client_data["expiryTime"] / 1000, tz=timezone.utc)
+                print(f"📅 Новая дата отключения: {final_date.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+            return True
+        else:
+            print(f"❌ Ошибка API при обновлении: {response.text}")
+            return False
+
+
 
     def check_user_by_username(self, username):
         pass
