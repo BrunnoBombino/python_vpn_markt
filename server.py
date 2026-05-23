@@ -189,8 +189,57 @@ class VPN:
             print(f"❌ Ошибка API при удалении: {response.text}")
             return False
 
-    def update_user(self, user):
+    def update_user(self, username, remark, new_username=None, new_uuid=None, add_days=None):
+        """
+                Обновляет данные клиента (Email, UUID, Время) строго внутри одного инбаунда.
+
+                :param username: Текущее имя (email) клиента
+                :param remark: Название инбаунда, в котором находится клиент
+                :param new_username: (Опционально) Новое имя для замены
+                :param new_uuid: (Опционально) Новый UUID для замены
+                :param add_days: (Опционально) Количество дней, которое нужно ДОБАВИТЬ к подписке
+        """
+
+        if not self.connect():
+            print("❌ Отмена операции: нет связи с API")
+            return False
+
+        # Получаем список инбаундов
+        inbounds_data = self.users()
+        if not inbounds_data.get("success"):
+            print("❌ Не удалось получить список инбаундов")
+            return False
+
+        inbound_id = None
+        client_data = None
+
+        # Ищем инбаунд и текущие настройки клиента
+        for inbound in inbounds_data.get("obj", []):
+            if inbound.get("remark") == remark:
+                inbound_id = inbound.get("id")
+                try:
+                    settings = json.loads(inbound.get("settings", "{}"))
+                    for client in settings.get("clients", []):
+                        if client.get("email") == username:
+                            client_data = client.copy()  # Создаем копию для изменений
+                            break
+                except Exception as e:
+                    print(f"⚠️ Ошибка чтения настроек инбаунда: {e}")
+                break
+
+        if inbound_id is None:
+            print(f"❌ Инбаунд '{remark}' не найден!")
+            return False
+        if client_data is None:
+            print(f"❌ Пользователь '{username}' не найден внутри '{remark}'!")
+            return False
+
+        # Сохраняем старый UUID, так как он нужен для URL-адреса запроса
+        old_uuid = client_data["id"]
+
+
+    def check_user_by_username(self, username):
         pass
 
-    def check_user(self, user):
+    def check_user_by_uuid(self, user_uuid):
         pass
