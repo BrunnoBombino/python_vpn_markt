@@ -1,3 +1,4 @@
 auth.py
 users.json
 session_cookies.pkl
+backup_lost_users.txt
