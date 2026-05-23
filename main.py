@@ -1,6 +1,6 @@
 import time
 
-from server import VPN
+from API import API
 
 # vpn = VPN()
 # vpn.add_user(username="Serge", remark="Limit", days=10)
@@ -42,10 +42,10 @@ from server import VPN
 #     print(f"📊 Использовано трафика: {info['used_traffic_gb']} ГБ / {info['limit_traffic_gb']} ГБ")
 #     print("==================================================\n")
 
-vpn = VPN()
+api = API()
 
 # Генерируем ссылку. Скрипт сам подставит IP вашего сервера 85.192.40.149 из настроек хоста
-config_link = vpn.get_client_link("a-02")
+config_link = api.get_client_link("a-02")
 
 if config_link:
     print("\n🔗 ССЫЛКА ДЛЯ НАСТРОЙКИ VPN:")

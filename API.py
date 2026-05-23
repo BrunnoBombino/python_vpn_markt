@@ -8,7 +8,7 @@ import auth
 from datetime import datetime, timezone, timedelta
 
 
-class VPN:
+class API:
     def __init__(self, cookie_file="session_cookies.pkl") -> None:
         self.host = auth.host
         self.login_data = {"username": auth.login, "password": auth.password}
