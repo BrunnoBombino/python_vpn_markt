@@ -407,6 +407,109 @@ class VPN:
                 print(f"Ответ сервера: {response.text}")
             return False
 
+    def restore_lost_users(self, backup_filename="backup_lost_users.txt"):
+        """
+        Сканирует файл бэкапа и пытается автоматически восстановить
+        всех пользователей, застрявших во время неудачного переноса.
+        """
+        import os
+        if not os.path.exists(backup_filename) or os.path.getsize(backup_filename) == 0:
+            print("📅 Файл бэкапа пуст или отсутствует. Восстановление не требуется.")
+            return True
+
+        if not self.connect():
+            print("❌ Отмена операции: нет связи с API")
+            return False
+
+        print(f"🔍 Начинаю анализ файла бэкапа '{backup_filename}'...")
+
+        # Будем собирать сюда блоки текста, которые НЕ удалось восстановить
+        failed_blocks = []
+
+        # Сначала прочитаем весь файл
+        with open(backup_filename, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Разделяем файл на отдельные бэкап-блоки
+        blocks = content.split("=== BACKUP ")
+
+        restored_count = 0
+        skipped_count = 0
+
+        for block in blocks:
+            if not block.strip():
+                continue
+
+            # Восстанавливаем разделитель для лога, если этот блок не починится
+            full_block_text = "=== BACKUP " + block
+
+            # Извлекаем нужные строчки с помощью парсинга текста
+            lines = block.split("\n")
+            target_inbound_id = None
+            client_data_json = None
+            username = "Неизвестно"
+
+            for line in lines:
+                if line.startswith("User:"):
+                    username = line.replace("User:", "").strip()
+                elif line.startswith("Target Inbound ID:"):
+                    target_inbound_id = line.replace("Target Inbound ID:", "").strip()
+                elif line.startswith("Data:"):
+                    client_data_json = line.replace("Data:", "").strip()
+
+            # Если блок поврежден или это пустой кусок, просто сохраняем его
+            if not target_inbound_id or not client_data_json:
+                failed_blocks.append(full_block_text)
+                continue
+
+            print(f"⏳ Пробую восстановить пользователя '{username}' в инбаунд ID {target_inbound_id}...")
+
+            # Формируем payload для API панели
+            try:
+                # client_data_json — это уже готовая JSON строка из файла,
+                # превращаем её обратно в словарь, чтобы убедиться в корректности
+                client_data = json.loads(client_data_json)
+
+                payload = {
+                    "id": int(target_inbound_id),
+                    "settings": json.dumps({"clients": [client_data]})
+                }
+
+                # Шлем экстренный запрос на добавление
+                response = self.ses.post(f"{self.host}/panel/api/inbounds/addClient", json=payload, timeout=10)
+
+                if response.status_code == 200 and response.json().get("success"):
+                    print(f"✅ Пользователь '{username}' успешно ВОССТАНОВЛЕН в панели!")
+                    restored_count += 1
+                else:
+                    # Если панель ответила, что такой email уже есть, значит кто-то создал его вручную
+                    if "already exists" in response.text:
+                        print(
+                            f"ℹ️ Пользователь '{username}' уже существует в целевом инбаунде. Запись удалена из бэкапа.")
+                        skipped_count += 1
+                    else:
+                        print(f"❌ Панель отклонила запрос восстановления для '{username}': {response.text}")
+                        failed_blocks.append(full_block_text)
+
+            except Exception as e:
+                print(f"💥 Ошибка при обработке записи '{username}': {e}")
+                failed_blocks.append(full_block_text)
+
+        # Перезаписываем файл бэкапа, оставляя ТУДА только то, что НЕ удалось восстановить
+        try:
+            with open(backup_filename, "w", encoding="utf-8") as f:
+                # Очищаем лишние переносы строк и собираем оставшиеся блоки
+                new_content = "".join(failed_blocks).strip()
+                if new_content:
+                    f.write(new_content + "\n\n")
+
+            print(
+                f"📊 Итоги восстановления: Успешно: {restored_count}, Пропущено: {skipped_count}, Сбоев: {len(failed_blocks)}")
+        except Exception as e:
+            print(f"⚠️ Ошибка при обновлении файла бэкапа: {e}")
+
+        return len(failed_blocks) == 0
+
     def check_user_by_username(self, username):
         pass
 
