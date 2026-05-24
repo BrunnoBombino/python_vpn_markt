@@ -141,12 +141,18 @@ async def process_reg_password(message: types.Message, state: FSMContext):
         session.add(new_user)
         await session.commit()
 
-    await message.answer(f"🎉 Регистрация завершена успешно!\n\n"
-                         f"👤 Ваш логин: `{user_data['username']}`\n"
-                         f"📧 Ваша почта: `{user_data['email']}`\n\n"
-                         f"⚠️ Мы не храним ваш пароль в нашей базе данных, а только его хэш!`\n\n"
-                         f"Теперь вы можете входить на сайт и управлять VPN через этого бота.",
-                         reply_markup=get_start_keyboard(needs_registration=False), parse_mode="Markdown")
+    welcome_html = (
+        f"<b>🎉 Регистрация завершена успешно!</b>\n\n"
+        f"👤 Ваш логин: <code>{user_data['username']}</code>\n"
+        f"📧 Ваша почта: <code>{user_data['email']}</code>\n\n"
+        f"⚠️ Мы не храним ваш пароль в нашей базе данных, а только его хэш!`\n\n"
+        f"Теперь вы можете входить на сайт и управлять VPN через этого бота."
+    )
+    await message.answer(
+        text=welcome_html,
+        reply_markup=get_start_keyboard(needs_registration=False),
+        parse_mode="HTML"
+    )
 
 
 # ==========================================
@@ -205,6 +211,13 @@ async def process_link_password(message: types.Message, state: FSMContext):
 
         success_username = db_user.username
 
-    await message.answer(f"✅ Аккаунт `{success_username}` успешно синхронизирован с вашим Telegram!\n"
-                         f"Теперь ваш личный кабинет полностью объединен.",
-                         reply_markup=get_start_keyboard(needs_registration=False), parse_mode="Markdown")
+    success_html = (
+        f"✅ Аккаунт <code>{success_username}</code> успешно синхронизирован с вашим Telegram!\n"
+        f"Теперь ваш личный кабинет полностью объединен."
+    )
+
+    await message.answer(
+        text=success_html,
+        reply_markup=get_start_keyboard(needs_registration=False),
+        parse_mode="HTML"
+    )
