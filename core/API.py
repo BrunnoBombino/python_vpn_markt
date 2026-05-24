@@ -172,13 +172,11 @@ class API:
         else:
             expiry_time_ms = 0
 
-        response = self.ses.get(f"{self.host}/panel/api/inbounds/list")
-        if response.status_code != 200:
-            raise Exception(f"Не удалось получить список инбаундов: {response.text}")
+        inbounds_data = self.users()
         inbound_id = self.find_inbound_id_by_remark(remark) # Находим ID нужного inbound
         # Находим целевой инбаунд в списке, чтобы узнать его протокол и тип безопасности
         target_inbound = None
-        for inbound in response.json().get("obj", []):
+        for inbound in inbounds_data.get("obj", []):
             if inbound.get("id") == inbound_id:
                 target_inbound = inbound
                 break
