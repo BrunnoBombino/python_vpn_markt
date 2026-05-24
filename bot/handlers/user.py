@@ -4,6 +4,8 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, or_
 
+from datetime import datetime, timezone
+
 from core.database import async_session
 from core.models import User
 from core.init_api import api  # Экземпляр вашего класса API
@@ -68,12 +70,12 @@ async def start_registration(callback: types.CallbackQuery, state: FSMContext):
 async def process_reg_username(message: types.Message, state: FSMContext):
     username = message.text.strip().lower()
 
-    # 1. Проверяем валидность символов (без пробелов и спецсимволов)
+    # Проверяем валидность символов (без пробелов и спецсимволов)
     if not username.isalnum():
         await message.answer("❌ Username может содержать только английские буквы и цифры! Попробуйте другой:")
         return
 
-    # 2. Глобальная проверка уникальности Username в панели 3x-ui
+    # Глобальная проверка уникальности Username в панели 3x-ui
     inbounds_data = api.users()
     is_taken_in_panel = False
     if inbounds_data.get("success"):
@@ -87,7 +89,7 @@ async def process_reg_username(message: types.Message, state: FSMContext):
         await message.answer("❌ Этот Username уже занят на VPN-сервере! Придумайте другой:")
         return
 
-    # 3. Проверяем уникальность логина в нашей локальной базе данных
+    # Проверяем уникальность логина в нашей локальной базе данных
     async with async_session() as session:
         db_query = select(User).where(User.username == username)
         db_res = await session.execute(db_query)
@@ -221,3 +223,121 @@ async def process_link_password(message: types.Message, state: FSMContext):
         reply_markup=get_start_keyboard(needs_registration=False),
         parse_mode="HTML"
     )
+
+
+# ==========================================
+#      БЛОК 3: ПОЛУЧЕНИЕ ССЫЛКИ ПОДПИСКИ
+# ==========================================
+
+@router.callback_query(F.data == "get_vpn_link")
+async def process_get_vpn_link(callback: types.CallbackQuery):
+    """
+    Обрабатывает запрос на получение или генерацию ссылки доступа.
+    Проверяет наличие активной подписки в локальной БД.
+    """
+    tg_id = callback.from_user.id
+
+    # Ищем пользователя в нашей локальной БД
+    async with async_session() as session:
+        query = select(User).where(User.telegram_id == tg_id)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await callback.message.answer("❌ Аккаунт не найден. Напишите /start.")
+        await callback.answer()
+        return
+
+    # ПРОВЕРКА ПОДПИСКИ: Проверяем, активна ли подписка по времени
+    now = datetime.now(timezone.utc)
+
+    # Если дата окончания пустая (None) или она в прошлом — подписки НЕТ
+    if db_user.expiry_date is None or db_user.expiry_date.replace(tzinfo=timezone.utc) < now:
+        no_subscription_text = (
+            f"⚠️ <b>Доступ ограничен</b>\n\n"
+            f"У вас нет активной подписки или срок её действия истёк.\n"
+            f"Чтобы получить ссылку для подключения к высокоскоростному VPN, "
+            f"пожалуйста, продлите или приобретите подписку.\n\n"
+            f"💳 <i>Вы можете сделать это через меню оплаты на нашем сайте или в боте.</i>"
+        )
+        await callback.message.edit_text(
+            text=no_subscription_text,
+            reply_markup=get_start_keyboard(needs_registration=False),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    # ЕСЛИ ПОДПИСКА АКТИВНА: Проверяем, создано ли уже подключение в 3x-ui
+    await callback.answer("⏳ Проверяю статус ключей на сервере...")
+
+    # Название инбаунда по умолчанию, куда будем добавлять (например, "Limit")
+    target_inbound_remark = "Limit"
+
+    if not db_user.vpn_uuid or not db_user.vpn_sub_id:
+        # Информируем пользователя о генерации (запрос к API может занять пару секунд)
+        await callback.message.edit_text("⚙️ <b>Создаю ваше персональное VPN подключение...</b>\n"
+                                         "Пожалуйста, подождите несколько секунд.", parse_mode="HTML")
+
+        # Вычисляем, сколько дней подписки у него реально осталось в БД, чтобы передать в 3x-ui
+        remaining_time = db_user.expiry_date.replace(tzinfo=timezone.utc) - now
+        days_to_grant = max(1, remaining_time.days)  # Минимум 1 день
+
+        # Вызываем наш метод добавления клиента по его уникальному username
+        new_vpn_data = api.add_user(
+            username=db_user.username,
+            remark=target_inbound_remark,
+            days=days_to_grant,
+            telegram_id=tg_id
+        )
+
+        if not new_vpn_data:
+            await callback.message.edit_text(
+                "💥 <b>Ошибка сервера</b>\nНе удалось автоматически сгенерировать ключи. "
+                "Пожалуйста, обратитесь в поддержку или попробуйте позже.",
+                reply_markup=get_start_keyboard(needs_registration=False),
+                parse_mode="HTML"
+            )
+            return
+
+        # Записываем сгенерированные панелью UUID и subId в нашу локальную БД к этому пользователю
+        async with async_session() as session:
+            # Снова подтягиваем пользователя для обновления в сессии
+            query = select(User).where(User.telegram_id == tg_id)
+            res = await session.execute(query)
+            user_to_update = res.scalar_one()
+
+            user_to_update.vpn_uuid = new_vpn_data["uuid"]
+            user_to_update.vpn_sub_id = new_vpn_data["sub_id"]
+            user_to_update.vpn_inbound_remark = target_inbound_remark
+
+            await session.commit()
+
+        # Обновляем переменные в текущей памяти функции
+        db_user_sub_id = new_vpn_data["sub_id"]
+    else:
+        # Если подключение уже было создано ранее — просто берем готовый sub_id из БД
+        db_user_sub_id = db_user.vpn_sub_id
+
+    # Выдаем готовую ссылку подписки
+    # Метод сам подставит правильный порт 2096 без секретного пути панели
+    sub_link = api.get_subscription_link(db_user.username)
+
+    success_text = (
+        f"🚀 <b>Ваш VPN готов к подключению!</b>\n\n"
+        f"📅 Подписка активна до: <code>{db_user.expiry_date.strftime('%Y-%m-%d %H:%M:%S')} UTC</code>\n\n"
+        f"🔄 <b>Ваша индивидуальная ссылка подписки:</b>\n"
+        f"<code>{sub_link}</code>\n\n"
+        f"👇 <i>Нажмите на текст ссылки выше, чтобы скопировать её. "
+        f"Затем откройте Hiddifi / Streisand и выберите 'Импортировать из буфера обмена'.</i>"
+    )
+
+    await callback.message.edit_text(
+        text=success_text,
+        reply_markup=get_start_keyboard(needs_registration=False),
+        parse_mode="HTML"
+    )
+
+# ==========================================
+#      БЛОК 4: ЛИЧНЫЙ КАБИНЕТ
+# ==========================================

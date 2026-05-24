@@ -1,15 +1,32 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-
 def get_start_keyboard(needs_registration: bool) -> InlineKeyboardMarkup:
-    """Генерирует кнопки для стартового меню"""
+    """Кнопки первого экрана при старте"""
     buttons = []
-
     if needs_registration:
         buttons.append([InlineKeyboardButton(text="📝 Создать новый аккаунт", callback_data="start_reg")])
-        buttons.append([InlineKeyboardButton(text="🔗 Привязать существующий аккаунт", callback_data="start_link")])
+        buttons.append([InlineKeyboardButton(text="🔗 Привязать аккаунт с сайта", callback_data="start_link")])
     else:
-        buttons.append([InlineKeyboardButton(text="👤 Мой Личный Кабинет", callback_data="user_profile")])
-        buttons.append([InlineKeyboardButton(text="🚀 Получить VPN ссылку", callback_data="get_vpn_link")])
+        buttons.append([InlineKeyboardButton(text="👤 Личный кабинет", callback_data="open_cabinet")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
+def get_cabinet_keyboard() -> InlineKeyboardMarkup:
+    """Интерфейс внутри личного кабинета"""
+    buttons = [
+        [InlineKeyboardButton(text="📊 Информация об аккаунте", callback_data="user_profile")],
+        [InlineKeyboardButton(text="💳 Покупка / Продление подписки", callback_data="buy_menu")],
+        [InlineKeyboardButton(text="❓ Помощь по подключению", callback_data="help_info")],
+        [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_buy_keyboard() -> InlineKeyboardMarkup:
+    """Интерфейс выбора тарифов и промокодов"""
+    buttons = [
+        [InlineKeyboardButton(text="🍏 Тариф Стандарт - 30 дней", callback_data="buy_tariff_standard")],
+        [InlineKeyboardButton(text="🎫 Ввести промокод", callback_data="enter_promo")],
+        [InlineKeyboardButton(text="⬅️ Назад в кабинет", callback_data="open_cabinet")]
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

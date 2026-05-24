@@ -8,3 +8,6 @@ class RegistrationStates(StatesGroup):
 class LinkAccountStates(StatesGroup):
     waiting_for_username = State()  # Ждем логин для привязки
     waiting_for_password = State()  # Ждем пароль для привязки
+
+class PromoStates(StatesGroup):
+    waiting_for_code = State()  # Ожидание ввода промокода текстом
