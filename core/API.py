@@ -149,11 +149,21 @@ class API:
                 return inbound.get("id")
         return None
 
-    def add_user(self, username, remark, days=0):
-        # 1. Проверяем/восстанавливаем сессию подключения
+    def add_user(self, username, remark, days=0, telegram_id=0):
+        """Добавляет клиента в панель и возвращает его UUID и subId"""
+
+        # Проверяем/восстанавливаем сессию подключения
         if not self.connect():
             print("❌ Отмена операции: нет связи с API")
             return False
+
+        # Безопасно переводим telegram_id в число.
+        # Если пришла строка "12345", она станет числом 12345.
+        # Если пришла пустая строка или текст, запишется 0.
+        try:
+            tg_id_int = int(telegram_id)
+        except (ValueError, TypeError):
+            tg_id_int = 0
 
         if remark != "VIP":
             now = datetime.now(timezone.utc) # Текущее время (UTC)
@@ -162,8 +172,26 @@ class API:
         else:
             expiry_time_ms = 0
 
+        response = self.ses.get(f"{self.host}/panel/api/inbounds/list")
+        if response.status_code != 200:
+            raise Exception(f"Не удалось получить список инбаундов: {response.text}")
         inbound_id = self.find_inbound_id_by_remark(remark) # Находим ID нужного inbound
+        # Находим целевой инбаунд в списке, чтобы узнать его протокол и тип безопасности
+        target_inbound = None
+        for inbound in response.json().get("obj", []):
+            if inbound.get("id") == inbound_id:
+                target_inbound = inbound
+                break
 
+        # Автоматически определяем нужный flow
+        client_flow = ""
+        if target_inbound and target_inbound.get("protocol") == "vless":
+            # Проверяем, включен ли Reality в настройках сети инбаунда
+            stream_settings = json.loads(target_inbound.get("streamSettings", "{}"))
+            if stream_settings.get("security") == "reality":
+                client_flow = "xtls-rprx-vision"  # Включаем Vision только для VLESS-Reality
+
+        # Генерируем случайную строку uuid
         client_uuid = str(uuid.uuid1())
 
         # Генерируем случайную строку из 16 строчных латинских букв и цифр
@@ -180,9 +208,10 @@ class API:
                 "totalGB": 0,
                 "expiryTime": expiry_time_ms,
                 "enable": True,
-                "tgId": "",
+                "tgId": tg_id_int,
                 "subId": client_sub_id,
-                "limitIp": 0
+                "limitIp": 0,
+                "flow": client_flow
             }]
         }
         payload = {
@@ -197,7 +226,10 @@ class API:
         if response.status_code == 200 and response.json().get("success"):
             print(f"✅ Пользователь {username} добавлен на {days} дней.")
             print(f"UUID: {client_uuid}")
-            return response.json()
+            return {
+                "uuid": client_uuid,
+                "subId": client_sub_id
+            }
         else:
             print(f"❌ Ошибка API: {response.json().get('msg')}")
             return None
