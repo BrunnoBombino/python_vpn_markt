@@ -149,21 +149,13 @@ class API:
                 return inbound.get("id")
         return None
 
-    def add_user(self, username, remark, days=0, telegram_id=0):
+    def add_user(self, username, remark, days=0):
         """Добавляет клиента в панель и возвращает его UUID и subId"""
 
         # Проверяем/восстанавливаем сессию подключения
         if not self.connect():
             print("❌ Отмена операции: нет связи с API")
             return False
-
-        # Безопасно переводим telegram_id в число.
-        # Если пришла строка "12345", она станет числом 12345.
-        # Если пришла пустая строка или текст, запишется 0.
-        try:
-            tg_id_int = int(telegram_id)
-        except (ValueError, TypeError):
-            tg_id_int = 0
 
         if remark != "VIP":
             now = datetime.now(timezone.utc) # Текущее время (UTC)
@@ -206,7 +198,7 @@ class API:
                 "totalGB": 0,
                 "expiryTime": expiry_time_ms,
                 "enable": True,
-                "tgId": tg_id_int,
+                "tgId": "",
                 "subId": client_sub_id,
                 "limitIp": 0,
                 "flow": client_flow
@@ -226,7 +218,7 @@ class API:
             print(f"UUID: {client_uuid}")
             return {
                 "uuid": client_uuid,
-                "subId": client_sub_id
+                "subid": client_sub_id
             }
         else:
             print(f"❌ Ошибка API: {response.json().get('msg')}")

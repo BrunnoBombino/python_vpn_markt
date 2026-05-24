@@ -288,8 +288,7 @@ async def process_get_vpn_link(callback: types.CallbackQuery):
         new_vpn_data = api.add_user(
             username=db_user.username,
             remark=target_inbound_remark,
-            days=days_to_grant,
-            telegram_id=tg_id
+            days=days_to_grant
         )
 
         if not new_vpn_data:
@@ -434,13 +433,12 @@ async def process_promo_code(message: types.Message, state: FSMContext):
         print(f"⭐ Новый пользователь {db_user.username}. Создаю аккаунт сразу в VIP...")
 
         # Вызываем метод прямого создания пользователя сразу в инбаунде VIP на 100 лет (безлимит)
-        # Мы передаем telegram_id, чтобы задействовать ваше новое поле tgId в панели
         new_vpn_data = api.add_user(
             username=db_user.username,
             remark=target_vip_remark,
             days=36500,  # 100 лет (панель примет это как долгосрочный безлимит)
-            telegram_id=tg_id
         )
+        print(new_vpn_data)
 
         if new_vpn_data:
             # Обновляем локальную базу данных SQLite, записывая новые ключи
@@ -449,8 +447,10 @@ async def process_promo_code(message: types.Message, state: FSMContext):
                 res = await session.execute(query)
                 user_to_update = res.scalar_one()
 
-                user_to_update.vpn_uuid = new_vpn_data["uuid"]
-                user_to_update.vpn_sub_id = new_vpn_data["sub_id"]
+                # Используем .get(), проверяя оба варианта написания ключа (sub_id и subId)
+                user_to_update.vpn_uuid = new_vpn_data.get("uuid")
+                user_to_update.vpn_sub_id = new_vpn_data.get("subid", new_vpn_data.get("subId"))
+
                 user_to_update.vpn_inbound_remark = target_vip_remark
                 user_to_update.expiry_date = None  # NULL в базе (вечный тариф)
                 await session.commit()
