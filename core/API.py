@@ -6,11 +6,18 @@ import string
 import requests
 import json
 import auth
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 
 class API:
     def __init__(self, cookie_file="session_cookies.pkl") -> None:
+        # Определяем корень проекта (поднимаемся на 1 уровень вверх из папки core)
+        self.base_dir = Path(__file__).resolve().parent.parent
+        # Делаем путь к файлу бэкапа абсолютным относительно корня проекта
+        self.backup_path = self.base_dir / "backup_lost_users.txt"
+        # То же самое для кук, чтобы они тоже лежали в корне
+        self.cookie_path = self.base_dir / cookie_file
         self.host = auth.host
         self.login_data = {"username": auth.login, "password": auth.password}
         self.cookie_file = cookie_file
@@ -362,14 +369,13 @@ class API:
             client_data["totalGB"] = 0
 
         # Запись аварийного бэкапа
-        backup_filename = "../backup_lost_users.txt"
         backup_entry = f"=== BACKUP {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n" \
                        f"User: {username}\n" \
                        f"Target Inbound ID: {new_inbound_id}\n" \
                        f"Data: {json.dumps(client_data)}\n" \
                        f"=====================================\n\n"
         try:
-            with open(backup_filename, "a", encoding="utf-8") as f:
+            with open(self.backup_path, "a", encoding="utf-8") as f:
                 f.write(backup_entry)
         except Exception as e:
             print(f"⚠️ Ошибка бэкапа ({e}), но продолжаем...")
@@ -396,26 +402,26 @@ class API:
             print(f"🚀 Пользователь '{username}' успешно перенесен в '{new_remark}'!")
             # Чистим бэкап
             try:
-                if os.path.exists(backup_filename):
-                    with open(backup_filename, "r", encoding="utf-8") as f:
+                if self.backup_path.exists():
+                    with open(self.backup_path, "r", encoding="utf-8") as f:
                         content = f.read()
                     content = content.replace(backup_entry, "")
-                    with open(backup_filename, "w", encoding="utf-8") as f:
+                    with open(self.backup_path, "w", encoding="utf-8") as f:
                         f.write(content)
             except Exception as e:
                 print(f"⚠️ Ошибка очистки бэкапа: {e}")
             return True
         else:
             print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось создать пользователя на новом месте!")
-            print(f"🚨 Восстановите его из файла '{backup_filename}'")
+            print(f"🚨 Восстановите его из файла '{self.backup_path}'")
             return False
 
-    def restore_lost_users(self, backup_filename="backup_lost_users.txt"):
+    def restore_lost_users(self):
         """
         Сканирует файл бэкапа и пытается автоматически восстановить
         всех пользователей, застрявших во время неудачного переноса.
         """
-        if not os.path.exists(backup_filename) or os.path.getsize(backup_filename) == 0:
+        if not self.backup_path.exists() or self.backup_path.stat().st_size == 0:
             print("📅 Файл бэкапа пуст или отсутствует. Восстановление не требуется.")
             return True
 
@@ -423,13 +429,13 @@ class API:
             print("❌ Отмена операции: нет связи с API")
             return False
 
-        print(f"🔍 Начинаю анализ файла бэкапа '{backup_filename}'...")
+        print(f"🔍 Начинаю анализ файла бэкапа '{self.backup_path.name}'...")
 
         # Будем собирать сюда блоки текста, которые НЕ удалось восстановить
         failed_blocks = []
 
         # Сначала прочитаем весь файл
-        with open(backup_filename, "r", encoding="utf-8") as f:
+        with open(self.backup_path, "r", encoding="utf-8") as f:
             content = f.read()
 
         # Разделяем файл на отдельные бэкап-блоки
@@ -499,7 +505,7 @@ class API:
 
         # Перезаписываем файл бэкапа, оставляя только то, что НЕ удалось восстановить
         try:
-            with open(backup_filename, "w", encoding="utf-8") as f:
+            with open(self.backup_path, "w", encoding="utf-8") as f:
                 # Очищаем лишние переносы строк и собираем оставшиеся блоки
                 new_content = "".join(failed_blocks).strip()
                 if new_content:
@@ -798,3 +804,4 @@ class API:
         # Итоговый формат: https://85.192.40.149:2096/sub/u5w1y4379jg8hvdl
         sub_link = f"{protocol}://{server_ip_or_domain}:{sub_port}/sub/{sub_id}"
         return sub_link
+

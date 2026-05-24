@@ -35,4 +35,4 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     def __repr__(self) -> str:
-        return f"<User id={self.id} email='{self.email}' balance={self.balance}>"
+        return f"<User id={self.id} email='{self.email}'>"
