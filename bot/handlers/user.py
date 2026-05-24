@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from core.database import async_session
 from core.models import User
 from core.init_api import api  # Экземпляр вашего класса API
-from bot.states import RegistrationStates, LinkAccountStates
-from bot.keyboards.user_kb import get_start_keyboard
+from bot.states import RegistrationStates, LinkAccountStates, PromoStates
+from bot.keyboards.user_kb import get_start_keyboard, get_cabinet_keyboard, get_buy_keyboard
 
 router = Router()
 
@@ -341,3 +341,129 @@ async def process_get_vpn_link(callback: types.CallbackQuery):
 # ==========================================
 #      БЛОК 4: ЛИЧНЫЙ КАБИНЕТ
 # ==========================================
+
+@router.callback_query(F.data == "open_cabinet")
+async def open_cabinet(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    text = "🗄️ <b>Личный кабинет пользователя</b>\n\nВыберите интересующий вас раздел:"
+    await callback.message.edit_text(text=text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
+    await callback.answer()
+
+# ==========================================
+#      БЛОК 5: МЕНЮ ПОКУПКИ ПОДПИСКИ
+# ==========================================
+
+@router.callback_query(F.data == "buy_menu")
+async def open_buy_menu(callback: types.CallbackQuery):
+    text = "💳 <b>Управление подпиской и тарифами</b>\n\nВыберите подходящий вариант или активируйте промокод:"
+    await callback.message.edit_text(text=text, reply_markup=get_buy_keyboard(), parse_mode="HTML")
+    await callback.answer()
+
+# ==========================================
+#      БЛОК 6: ПОМОЩЬ И ИНСТРУКЦИИ
+# ==========================================
+
+@router.callback_query(F.data == "help_info")
+async def show_help_info(callback: types.CallbackQuery):
+    help_text = (
+        "❓ <b>Инструкции по настройке и подключению</b>\n\n"
+        "Для работы с нашим VPN мы рекомендуем использовать приложение <b>Hiddify Next</b> или <b>Streisand</b>.\n\n"
+        "🍏 <b>Для iPhone (iOS):</b>\n"
+        "1. Установите бесплатное приложение <b>Streisand</b> или <b>Hiddify</b> из AppStore.\n"
+        "2. Скопируйте ссылку подписки из раздела 'Информация об аккаунте'.\n"
+        "3. В приложении нажмите знак [+] ➡️ 'Импортировать из буфера'.\n\n"
+        "🤖 <b>Для Android:</b>\n"
+        "1. Скачайте приложение <b>Hiddify Next</b> или <b>v2rayNG</b> из Google Play.\n"
+        "2. Скопируйте ваш индивидуальный URL-адрес подписки.\n"
+        "3. Импортируйте профиль и нажмите круглую кнопку запуска по центру."
+    )
+    # Возвращаем пользователя обратно в ЛК
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="⬅️ Назад в кабинет", callback_data="open_cabinet")]
+    ])
+    await callback.message.edit_text(text=help_text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+# ==========================================
+#      БЛОК 7: ВВОД ПРОМОКОДА
+# ==========================================
+
+# Включение машины состояний FSM
+@router.callback_query(F.data == "enter_promo")
+async def ask_for_promo(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "🎫 <b>Активация промокода</b>\n\nВведите ваш секретный промокод в ответном сообщении:", parse_mode="HTML")
+    await state.set_state(PromoStates.waiting_for_code)
+    await callback.answer()
+
+
+# Проверка и перевод в VIP-безлимит
+@router.message(PromoStates.waiting_for_code)
+async def process_promo_code(message: types.Message, state: FSMContext):
+    promo_entered = message.text.strip().upper()
+    await state.clear()
+
+    # Список ваших промокодов (в будущем можно вынести в таблицу БД)
+    VALID_PROMO_CODES = ["FREEVIP", "PROMO2026", "VPNUNLIMITED"]
+
+    if promo_entered not in VALID_PROMO_CODES:
+        await message.answer("❌ <b>Ошибка:</b> Неверный или устаревший промокод!",
+                             reply_markup=get_buy_keyboard(), parse_mode="HTML")
+        return
+
+    # Если промокод верный, запускаем процесс VIP-активации
+    tg_id = message.from_user.id
+
+    async with async_session() as session:
+        query = select(User).where(User.telegram_id == tg_id)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await message.answer("❌ Пользователь не найден в базе данных.")
+        return
+
+    # Проверяем, создано ли вообще подключение на сервере 3x-ui
+    current_remark = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "limit"
+
+    # Вызываем метод безопасной миграции
+    # Он сам проверит уникальность имен, сотрет лимиты трафика/времени,
+    # сделает аварийный бэкап и зальет клиента в VIP-инбаунд
+    transfer_success = api.change_inbound(
+        username=db_user.username,
+        current_remark=current_remark,
+        new_remark="VIP"
+    )
+
+    if transfer_success:
+        # Обновляем локальную базу данных SQLite: выставляем бессрочный период
+        async with async_session() as session:
+            query = select(User).where(User.telegram_id == tg_id)
+            res = await session.execute(query)
+            user_to_update = res.scalar_one()
+
+            user_to_update.vpn_inbound_remark = "VIP"
+            user_to_update.expiry_date = None  # В SQLite это запишется как NULL (вечный)
+            await session.commit()
+
+        success_text = (
+            "⭐ <b>Промокод успешно активирован!</b>\n\n"
+            "Поздравляем! Вам предоставлен бессрочный <b>VIP-Безлимит</b>.\n"
+            "Все ограничения по трафику и времени полностью сняты.\n\n"
+            "<i>Если ваше приложение не переподключилось автоматически, просто "
+            "обновите подписку внутри Hiddifi.</i>"
+        )
+        await message.answer(text=success_text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
+    else:
+        await message.answer("❌ <b>Техническая ошибка:</b> Не удалось перенести ваш аккаунт на VIP-сервер. "
+                             "Пожалуйста, обратитесь к администратору.", reply_markup=get_buy_keyboard(),
+                             parse_mode="HTML")
+
+
+# Кнопка возврата на главный экран
+@router.callback_query(F.data == "back_to_main")
+async def back_to_main_menu(callback: types.CallbackQuery):
+    text = "📋 <b>Главное меню управления VPN</b>\n\nИспользуйте кнопку ниже для входа в кабинет:"
+    await callback.message.edit_text(text=text, reply_markup=get_start_keyboard(needs_registration=False),
+                                     parse_mode="HTML")
+    await callback.answer()
