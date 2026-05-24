@@ -5,7 +5,7 @@ import secrets
 import string
 import requests
 import json
-import auth
+from core import auth
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -18,8 +18,8 @@ class API:
         self.backup_path = self.base_dir / "backup_lost_users.txt"
         # То же самое для кук, чтобы они тоже лежали в корне
         self.cookie_path = self.base_dir / cookie_file
-        self.host = auth.host
-        self.login_data = {"username": auth.login, "password": auth.password}
+        self.host = auth.HOST
+        self.login_data = {"username": auth.LOGIN, "password": auth.PASSWORD}
         self.cookie_file = cookie_file
 
         # Создаем сессию
