@@ -50,34 +50,53 @@ class API:
     def _is_connected(self) -> bool:
         """Проверяет, жива ли текущая сессия API"""
         try:
-            response = self.ses.get(f"{self.host}/panel/api/inbounds/list", timeout=5)
+            response = self.ses.get(f"{self.host}/panel/api/inbounds/list", timeout=5, verify=False)
 
-            # Если вернулся не статус 200 или в ответе HTML — сессия мертва
+            # Если вернулся не статус 200 или в ответе HTML (признак редиректа на логин) — сессия мертва
             if response.status_code != 200 or "html" in response.headers.get("Content-Type", "").lower():
                 return False
 
-            return response.json().get("success") == True
-        except (requests.RequestException, ValueError):
+            # Проверяем, что ответ действительно является JSON-объектом
+            data = response.json()
+            return data.get("success") == True
+        except (requests.RequestException, ValueError, AttributeError):
+            # Перехватываем ошибки сети, тайм-ауты и сбои парсинга JSON
             return False
 
     def connect(self) -> bool:
         """Проверяет старую сессию и делает логин только при необходимости"""
+        # Если старая сессия из кук еще жива — сразу выходим, не спамим сервер
         if self._is_connected():
             print("🔄 Сессия активна, повторный вход не требуется.")
             return True
 
-        print("0️⃣ Сессия пуста или устарела. Выполняю вход...")
+        print("🔐 Сессия пуста или устарела. Выполняю принудительный вход...")
         try:
-            response = self.ses.post(f"{self.host}/login", data=self.login_data, timeout=5)
-            if response.status_code == 200 and response.json().get("success"):
-                print("🔓 Успешная авторизация!")
-                self._save_cookies()  # Сохраняем новые куки после успешного входа
+            # Сбрасываем старые невалидные куки перед попыткой авторизации
+            self.ses.cookies.clear()
+
+            response = self.ses.post(f"{self.host}/login", data=self.login_data, timeout=5, verify=False)
+
+            # ЗАЩИТА: Проверяем, что панель не вернула HTML (например, при ошибке сервера или неверном хосте)
+            if "html" in response.headers.get("Content-Type", "").lower():
+                print("❌ Ошибка авторизации: Сервер вернул HTML вместо JSON. Проверьте правильность URL/Host.")
+                return False
+
+            # Безопасно парсим ответ
+            data = response.json()
+            if response.status_code == 200 and data.get("success") == True:
+                print("🔓 Успешная авторизация в панели 3x-ui!")
+                self._save_cookies()  # Сохраняем новые рабочие куки в JSON-файл
                 return True
 
-            print(f"❌ Ошибка авторизации: {response.text}")
+            print(f"❌ Панель отклонила вход. Сообщение: {data.get('msg', 'Нет описания ошибки')}")
             return False
+
         except requests.RequestException as e:
-            print(f"💥 Ошибка сети при подключении: {e}")
+            print(f"💥 Критическая ошибка сети при подключении к панели: {e}")
+            return False
+        except ValueError:
+            print("💥 Ошибка: Ответ сервера при авторизации не удалось распознать как JSON.")
             return False
 
     @staticmethod
