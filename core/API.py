@@ -51,8 +51,11 @@ class API:
         """Проверяет, жива ли текущая сессия API"""
         try:
             response = self.ses.get(f"{self.host}/panel/api/inbounds/list", timeout=5)
-            if response.status_code != 200:
+
+            # Если вернулся не статус 200 или в ответе HTML — сессия мертва
+            if response.status_code != 200 or "html" in response.headers.get("Content-Type", "").lower():
                 return False
+
             return response.json().get("success") == True
         except (requests.RequestException, ValueError):
             return False
@@ -83,8 +86,36 @@ class API:
             json.dump(data, file, indent=4, ensure_ascii=False)
 
     def users(self):
-        user_list = self.ses.get(f"{self.host}/panel/api/inbounds/list").json()
-        return user_list
+        """Получает список инбаундов. Если сессия протухла, автоматически перелогинивается."""
+        # 1. Перед запросом проверяем/подключаем сессию
+        if not self.connect():
+            return {"success": False, "msg": "Нет подключения к API"}
+
+        try:
+            response = self.ses.get(f"{self.host}/panel/api/inbounds/list", timeout=10)
+
+            # Если сервер вернул 401/302 или HTML-код вместо JSON (признак сгоревшей сессии)
+            if response.status_code != 200 or "html" in response.headers.get("Content-Type", "").lower():
+                print("🔄 Сессия в файле устарела. Пробую принудительный перевход...")
+
+                # Сбрасываем куки в сессии
+                self.ses.cookies.clear()
+
+                # Делаем принудительный логин (он перезапишет файл кук)
+                # Чтобы метод connect() не подумал, что всё ок, убедитесь,
+                # что внутри connect() тоже стоит хорошая проверка.
+                if self.connect():
+                    # Пробуем сделать запрос повторно со свежими куками
+                    response = self.ses.get(f"{self.host}/panel/api/inbounds/list", timeout=10)
+                else:
+                    return {"success": False, "msg": "Не удалось обновить сессию"}
+
+            # Безопасно парсим JSON
+            return response.json()
+
+        except (requests.RequestException, ValueError) as e:
+            print(f"💥 Критическая ошибка при запросе списка инбаундов: {e}")
+            return {"success": False, "msg": str(e)}
 
     def find_inbound_id_by_remark(self, remark):
         """Поиск ID инбаунда по его названию (remark)"""

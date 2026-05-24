@@ -1,5 +1,5 @@
 import bcrypt
-from aiogram import Router, types, F
+from aiogram import types, F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, or_
