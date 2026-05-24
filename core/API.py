@@ -1,7 +1,8 @@
 import os
 import pickle
-import time
 import uuid
+import secrets
+import string
 import requests
 import json
 import auth
@@ -108,6 +109,11 @@ class API:
 
         client_uuid = str(uuid.uuid1())
 
+        # Генерируем случайную строку из 16 строчных латинских букв и цифр
+        alphabet = string.ascii_lowercase + string.digits
+        client_sub_id = "".join(secrets.choice(alphabet) for _ in range(16))
+        # =============================================================
+
         # Формируем структуру настроек
         client_settings = {
             "clients": [{
@@ -118,7 +124,7 @@ class API:
                 "expiryTime": expiry_time_ms,
                 "enable": True,
                 "tgId": "",
-                "subId": "",
+                "subId": client_sub_id,
                 "limitIp": 0
             }]
         }
@@ -356,7 +362,7 @@ class API:
             client_data["totalGB"] = 0
 
         # Запись аварийного бэкапа
-        backup_filename = "backup_lost_users.txt"
+        backup_filename = "../backup_lost_users.txt"
         backup_entry = f"=== BACKUP {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n" \
                        f"User: {username}\n" \
                        f"Target Inbound ID: {new_inbound_id}\n" \
@@ -543,6 +549,7 @@ class API:
                 total_bytes_limit = user_stats.get("total", 0)  # Лимит трафика
                 expiry_time_ms = user_stats.get("expiryTime", 0)  # Срок действия
                 uuid = user_stats.get("uuid", "")
+                subId = user_stats.get("subId", "")
                 is_enabled = user_stats.get("enable", False)
 
                 # Переводим байты в Гигабайты (1 ГБ = 1024^3 байт)
@@ -563,6 +570,7 @@ class API:
                     "inbound_remark": remark_name,
                     "inbound_id": inbound_id,
                     "uuid": uuid,
+                    "subId": subId,
                     "is_enabled": is_enabled,
                     "used_traffic_gb": round(used_gb, 2),
                     "limit_traffic_gb": round(limit_gb, 2) if isinstance(limit_gb, (int, float)) else limit_gb,
@@ -743,3 +751,50 @@ class API:
         else:
             print(f"⚠️ Протокол {protocol} пока не поддерживается автоматическим генератором ссылок.")
             return None
+
+    def get_subscription_link(self, username, sub_port=2096):
+        """
+        Генерирует правильную публичную HTTPS-ссылку подписки для клиента.
+
+        :param username: Email (имя) пользователя
+        :param sub_port: Порт сервера подписок 3x-ui (по умолчанию 2096)
+        """
+        from urllib.parse import urlparse
+
+        if not self.connect():
+            print("❌ Отмена операции: нет связи с API")
+            return None
+
+        # 1. Получаем список инбаундов
+        inbounds_data = self.users()
+        if not inbounds_data.get("success"):
+            print("❌ Не удалось получить список инбаундов")
+            return None
+
+        sub_id = None
+
+        # 2. Ищем subId пользователя
+        for inbound in inbounds_data.get("obj", []):
+            client_stats = inbound.get("clientStats", [])
+            for stat in client_stats:
+                if stat.get("email") == username:
+                    sub_id = stat.get("subId")
+                    break
+            if sub_id is not None:
+                break
+
+        if not sub_id:
+            print(f"❌ Пользователь '{username}' не найден или у него пустой subId.")
+            return None
+
+        # 3. Вытаскиваем только чистый IP/домен из self.host (без портов и секретных путей)
+        parsed_host = urlparse(self.host)
+        server_ip_or_domain = parsed_host.hostname
+
+        # Определяем протокол (http или https) на основе вашей панели
+        protocol = parsed_host.scheme if parsed_host.scheme else "https"
+
+        # 4. Собираем правильную ссылку: БЕЗ секретного пути и со специальным портом подписок
+        # Итоговый формат: https://85.192.40.149:2096/sub/u5w1y4379jg8hvdl
+        sub_link = f"{protocol}://{server_ip_or_domain}:{sub_port}/sub/{sub_id}"
+        return sub_link
