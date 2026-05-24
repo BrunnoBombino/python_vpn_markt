@@ -12,6 +12,8 @@ from core.auth import WEB_HOST, WEB_PORT
 # 2. Импортируем СБОРЩИКИ роутеров из файлов __init__.py
 from bot.handlers import router as bot_router
 from web.routes import api_router
+
+
 # Настройка логгера
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

@@ -13,7 +13,10 @@ class User(Base):
     # Telegram ID пользователя (может быть пустым, если человек зарегистрировался только на сайте)
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True)
 
-    # Email пользователя (используется как логин на сайте и как уникальный Email в панели 3x-ui)
+    # Username пользователя (используется как логин на сайте и как уникальный Email в панели 3x-ui)
+    username: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+
+    # Email пользователя (используется как логин на сайте)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
 
     # Хэш пароля для авторизации на сайте
@@ -35,4 +38,4 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     def __repr__(self) -> str:
-        return f"<User id={self.id} email='{self.email}'>"
+        return f"<User id={self.id} email='{self.email}' username='{self.username}'>"
