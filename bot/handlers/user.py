@@ -45,12 +45,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
             await message.answer(text=text, reply_markup=get_start_keyboard(needs_registration=True))
         else:
             text = (
-                f"🔄 С возвращением, {message.from_user.full_name}!\n\n"
-                f"👤 Логин: `{user.username}`\n"
-                f"📧 Почта: `{user.email}`\n\n"
-                f"Управляйте подпиской через меню ниже:"
+                f"🔄 <b>Добро пожаловать в панель управления VPN!</b>\n\n"
+                f"👤 Логин: <code>{user.username}</code>\n\n"
+                f"Используйте кнопку ниже для открытия вашего Личного Кабинета ↓"
             )
-            await message.answer(text=text, reply_markup=get_start_keyboard(needs_registration=False))
+            # Передаем false, чтобы отобразить кнопку Кабинета вместо регистрации
+            await message.answer(text=text, reply_markup=get_start_keyboard(needs_registration=False),
+                                 parse_mode="HTML")
 
 
 # ==========================================
