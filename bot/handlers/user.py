@@ -404,7 +404,7 @@ async def process_promo_code(message: types.Message, state: FSMContext):
     promo_entered = message.text.strip().upper()
     await state.clear()
 
-    # Список ваших промокодов (в будущем можно вынести в таблицу БД)
+    # Валидные промокоды
     VALID_PROMO_CODES = ["FREEVIP", "PROMO2026", "VPNUNLIMITED"]
 
     if promo_entered not in VALID_PROMO_CODES:
@@ -412,9 +412,9 @@ async def process_promo_code(message: types.Message, state: FSMContext):
                              reply_markup=get_buy_keyboard(), parse_mode="HTML")
         return
 
-    # Если промокод верный, запускаем процесс VIP-активации
     tg_id = message.from_user.id
 
+    # 1. Получаем пользователя из локальной БД
     async with async_session() as session:
         query = select(User).where(User.telegram_id == tg_id)
         result = await session.execute(query)
@@ -424,41 +424,74 @@ async def process_promo_code(message: types.Message, state: FSMContext):
         await message.answer("❌ Пользователь не найден в базе данных.")
         return
 
-    # Проверяем, создано ли вообще подключение на сервере 3x-ui
-    current_remark = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "limit"
+    # Целевой инбаунд для промокода
+    target_vip_remark = "VIP"
+    transfer_success = False
 
-    # Вызываем метод безопасной миграции
-    # Он сам проверит уникальность имен, сотрет лимиты трафика/времени,
-    # сделает аварийный бэкап и зальет клиента в VIP-инбаунд
-    transfer_success = api.change_inbound(
-        username=db_user.username,
-        current_remark=current_remark,
-        new_remark="VIP"
-    )
+    # 2. ПРОВЕРКА: Создан ли пользователь в панели 3x-ui?
+    # Если vpn_uuid пустой, значит пользователя на сервере VPN ЕЩЕ НЕТ
+    if not db_user.vpn_uuid or not db_user.vpn_sub_id:
+        print(f"⭐ Новый пользователь {db_user.username}. Создаю аккаунт сразу в VIP...")
 
+        # Вызываем метод прямого создания пользователя сразу в инбаунде VIP на 100 лет (безлимит)
+        # Мы передаем telegram_id, чтобы задействовать ваше новое поле tgId в панели
+        new_vpn_data = api.add_user(
+            username=db_user.username,
+            remark=target_vip_remark,
+            days=36500,  # 100 лет (панель примет это как долгосрочный безлимит)
+            telegram_id=tg_id
+        )
+
+        if new_vpn_data:
+            # Обновляем локальную базу данных SQLite, записывая новые ключи
+            async with async_session() as session:
+                query = select(User).where(User.telegram_id == tg_id)
+                res = await session.execute(query)
+                user_to_update = res.scalar_one()
+
+                user_to_update.vpn_uuid = new_vpn_data["uuid"]
+                user_to_update.vpn_sub_id = new_vpn_data["sub_id"]
+                user_to_update.vpn_inbound_remark = target_vip_remark
+                user_to_update.expiry_date = None  # NULL в базе (вечный тариф)
+                await session.commit()
+
+            transfer_success = True
+
+    # 3. Если пользователь УЖЕ СУЩЕСТВОВАЛ в панели, делаем стандартный безопасный перенос
+    else:
+        print(f"🔄 Существующий пользователь {db_user.username}. Переношу из {db_user.vpn_inbound_remark} в VIP...")
+        current_remark = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "Limit"
+
+        # Наш безопасный метод переноса с бэкапом
+        transfer_success = api.change_inbound(
+            username=db_user.username,
+            current_remark=current_remark,
+            new_remark=target_vip_remark
+        )
+
+        if transfer_success:
+            # Обновляем локальную базу данных SQLite: меняем инбаунд на VIP
+            async with async_session() as session:
+                query = select(User).where(User.telegram_id == tg_id)
+                res = await session.execute(query)
+                user_to_update = res.scalar_one()
+
+                user_to_update.vpn_inbound_remark = target_vip_remark
+                user_to_update.expiry_date = None  # Сбрасываем ограничение времени в локальной БД
+                await session.commit()
+
+    # 4. Выводим результат пользователю
     if transfer_success:
-        # Обновляем локальную базу данных SQLite: выставляем бессрочный период
-        async with async_session() as session:
-            query = select(User).where(User.telegram_id == tg_id)
-            res = await session.execute(query)
-            user_to_update = res.scalar_one()
-
-            user_to_update.vpn_inbound_remark = "VIP"
-            user_to_update.expiry_date = None  # В SQLite это запишется как NULL (вечный)
-            await session.commit()
-
         success_text = (
             "⭐ <b>Промокод успешно активирован!</b>\n\n"
             "Поздравляем! Вам предоставлен бессрочный <b>VIP-Безлимит</b>.\n"
             "Все ограничения по трафику и времени полностью сняты.\n\n"
-            "<i>Если ваше приложение не переподключилось автоматически, просто "
-            "обновите подписку внутри Hiddifi.</i>"
+            "<i>Зайдите в раздел 'Информация об аккаунте', чтобы получить вашу новую ссылку подписки!</i>"
         )
         await message.answer(text=success_text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
     else:
-        await message.answer("❌ <b>Техническая ошибка:</b> Не удалось перенести ваш аккаунт на VIP-сервер. "
-                             "Пожалуйста, обратитесь к администратору.", reply_markup=get_buy_keyboard(),
-                             parse_mode="HTML")
+        await message.answer("❌ <b>Техническая ошибка:</b> Не удалось активировать промокод на сервере. "
+                             "Пожалуйста, попробуйте позже.", reply_markup=get_buy_keyboard(), parse_mode="HTML")
 
 
 # Кнопка возврата на главный экран
