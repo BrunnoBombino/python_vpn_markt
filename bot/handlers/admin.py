@@ -13,6 +13,8 @@ from core.database import async_session
 from core.models import User
 from bot.states import AdminPromoStates
 from bot.keyboards.admin_kb import get_admin_main_keyboard
+from bot.states import AdminSearchStates
+from bot.keyboards.admin_kb import get_user_manage_keyboard
 
 
 router = Router()
@@ -293,6 +295,93 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
     ])
     await callback.message.edit_text(text=stats_html, reply_markup=kb, parse_mode="HTML")
 
+# ==========================================
+#      БЛОК : ВОЗВРАТ В АДМИНКУ
+# ==========================================
+
+# Включение режима поиска
+@router.callback_query(F.data == "admin_search_user")
+async def admin_start_search(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+    await callback.message.edit_text("🔍 <b>Поиск пользователя</b>\n\nВведите Username (логин) клиента:")
+    await state.set_state(AdminSearchStates.waiting_for_username)
+    await callback.answer()
+
+
+# Обработка введенного username и вывод карточки
+@router.message(AdminSearchStates.waiting_for_username)
+async def admin_process_search(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    search_name = message.text.strip().lower()
+    await state.clear()
+
+    # Ищем пользователя в локальной БД
+    async with async_session() as session:
+        query = select(User).where(User.username == search_name)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await message.answer(f"❌ Пользователь с Username <code>{search_name}</code> не найден в базе данных бота.",
+                             reply_markup=get_admin_main_keyboard(), parse_mode="HTML")
+        return
+
+    # Опрашиваем живую статистику панели 3x-ui
+    vpn_info = api.check_user(db_user.username)
+
+    # 3. Вычисляем статус онлайн поlastOnline
+    online_status = "⚪ Не создавался на сервере"
+    if db_user.vpn_uuid:
+        # Для получения сырого lastOnline сделаем быстрый скан clientStats
+        inbounds_data = api.users()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        last_online_ms = 0
+
+        if inbounds_data.get("success"):
+            for inbound in inbounds_data.get("obj", []):
+                for stat in inbound.get("clientStats", []):
+                    if stat.get("email") == db_user.username:
+                        last_online_ms = stat.get("lastOnline", 0)
+                        break
+
+        if last_online_ms == 0:
+            online_status = "🔴 Оффлайн (Ни разу не подключался)"
+        elif (now_ms - last_online_ms) < 300000:
+            online_status = "🟢 <b>Онлайн (Подключен)</b>"
+        else:
+            # Переводим timestamp в красивую дату
+            lost_date = datetime.fromtimestamp(last_online_ms / 1000, tz=timezone.utc)
+            online_status = f"🔴 Оффлайн (Был в сети: <code>{lost_date.strftime('%Y-%m-%d %H:%M:%S')} UTC</code>)"
+
+    # Данные из check_user
+    used_traffic = vpn_info["used_traffic_gb"] if vpn_info else "0.0"
+    limit_traffic = vpn_info["limit_traffic_gb"] if vpn_info else "Нет ключей"
+    expiry_date_str = vpn_info["expiry_date"] if vpn_info else (
+        db_user.expiry_date.strftime('%Y-%m-%d') if db_user.expiry_date else "Нет оплаты")
+    is_enabled = vpn_info["is_enabled"] if vpn_info else True
+
+    # Формируем карточку админа
+    user_card_html = (
+        f"👤 <b>КАРТОЧКА ПОЛЬЗОВАТЕЛЯ: {db_user.username.upper()}</b>\n"
+        f"───────────────────\n"
+        f"🆔 Telegram ID: <code>{db_user.telegram_id if db_user.telegram_id else 'Не привязан'}</code>\n"
+        f"📧 Email сайта: <code>{db_user.email}</code>\n"
+        f"📅 Регистрация: <code>{db_user.created_at.strftime('%Y-%m-%d')}</code>\n"
+        f"📍 Текущий тариф в БД: <code>{db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else 'Не назначен'}</code>\n\n"
+        f"📡 <b>Статус соединения:</b>\n"
+        f"└ Сетевой статус: {online_status}\n\n"
+        f"📊 <b>Параметры VPN (3x-ui):</b>\n"
+        f"├ Доступ до: <code>{expiry_date_str}</code>\n"
+        f"└ Трафик: <code>{used_traffic} ГБ</code> / <code>{limit_traffic} ГБ</code>\n"
+        f"───────────────────\n"
+        f"🎛️ <i>Выберите действие для изменения параметров клиента:</i>"
+    )
+
+    await message.answer(text=user_card_html, reply_markup=get_user_manage_keyboard(db_user.username, is_enabled),
+                         parse_mode="HTML")
 
 # ==========================================
 #      БЛОК : ВОЗВРАТ В АДМИНКУ

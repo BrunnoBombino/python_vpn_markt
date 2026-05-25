@@ -14,3 +14,6 @@ class PromoStates(StatesGroup):
 
 class AdminPromoStates(StatesGroup):
     waiting_for_days = State()  # Ждем количество дней действия промокода
+
+class AdminSearchStates(StatesGroup):
+    waiting_for_username = State()  # Ожидание ввода username для поиска
