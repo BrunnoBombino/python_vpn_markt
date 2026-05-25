@@ -487,6 +487,75 @@ async def admin_add_five_days(callback: types.CallbackQuery):
 
     await callback.message.answer(text=success_msg, reply_markup=kb, parse_mode="HTML")
 
+
+# ==========================================
+#      БЛОК 6: УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ
+# ==========================================
+
+# Обработчик нажатия кнопки "Удалить аккаунт навсегда"
+@router.callback_query(F.data.startswith("adm_delete_user:"))
+async def admin_delete_user_completely(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    # Вырезаем username из даты кнопки
+    target_username = callback.data.split(":")[1]
+
+    await callback.answer("🗑️ Удаляю пользователя...")
+
+    # Ищем пользователя в локальной SQLite, чтобы узнать его инбаунд и UUID
+    async with async_session() as session:
+        query = select(User).where(User.username == target_username)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await callback.message.answer(f"❌ Пользователь <code>{target_username}</code> не найден в БД.",
+                                      parse_mode="HTML")
+        return
+
+    # ЕСЛИ У ПОЛЬЗОВАТЕЛЯ ЕСТЬ КЛЮЧИ — УДАЛЯЕМ ЕГО ИЗ ПАНЕЛИ 3X-UI
+    if db_user.vpn_uuid:
+        inbound_remark = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "Limit"
+
+        api_success = api.del_user(username=db_user.username, remark=inbound_remark)
+
+        if not api_success:
+            await callback.message.answer(
+                f"❌ <b>Ошибка API:</b> Не удалось удалить пользователя с сервера 3x-ui.\n"
+                f"Операция отменена, пользователь сохранен в базе данных.",
+                parse_mode="HTML"
+            )
+            return
+
+    # УДАЛЯЕМ ЗАПИСЬ ИЗ ЛОКАЛЬНОЙ SQLite БАЗЫ ДАННЫХ
+    async with async_session() as session:
+        # В SQLAlchemy для удаления нужно заново выбрать объект и вызвать session.delete
+        query = select(User).where(User.username == target_username)
+        res = await session.execute(query)
+        user_to_delete = res.scalar_one()
+
+        await session.delete(user_to_delete)  # Стираем строку из таблицы users
+        await session.commit()  # Фиксируем удаление на диске
+
+    # Выводим отчет администратору
+    delete_msg = (
+        f"🗑️ <b>ПОЛЬЗОВАТЕЛЬ УСПЕШНО УДАЛЕН</b>\n"
+        f"──────────────────\n"
+        f"👤 Логин: <code>{target_username}</code>\n"
+        f"📧 Бывшая почта: <code>{db_user.email}</code>\n"
+        f"🆔 Бывший TG ID: <code>{db_user.telegram_id if db_user.telegram_id else 'Не привязан'}</code>\n"
+        f"──────────────────\n"
+        f"<i>Аккаунт полностью стерт из базы данных и очищен на сервере 3x-ui.</i>"
+    )
+
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="⚙️ В админку", callback_data="admin_back")]
+    ])
+
+    await callback.message.answer(text=delete_msg, reply_markup=kb, parse_mode="HTML")
+
+
 # ==========================================
 #      БЛОК : ВОЗВРАТ В АДМИНКУ
 # ==========================================
