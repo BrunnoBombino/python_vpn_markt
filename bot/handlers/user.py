@@ -577,3 +577,7 @@ async def back_to_main_menu(callback: types.CallbackQuery):
     await callback.message.edit_text(text=text, reply_markup=get_start_keyboard(needs_registration=False),
                                      parse_mode="HTML")
     await callback.answer()
+
+# ==========================================
+#      БЛОК 8: ИНФОРМАЦИЯ ОБ АККАУНТЕ
+# ==========================================
