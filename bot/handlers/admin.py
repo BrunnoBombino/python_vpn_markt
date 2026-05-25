@@ -654,6 +654,91 @@ async def admin_toggle_user_block(callback: types.CallbackQuery):
                                      reply_markup=get_user_manage_keyboard(db_user.username, new_status),
                                      parse_mode="HTML")
 
+# ==========================================
+#      БЛОК 8: СБРОС ТРАФИКА ПОЛЬЗОВАТЕЛЯ
+# ==========================================
+
+# Обработчик кнопки сброса трафика пользователя на 0
+@router.callback_query(F.data.startswith("adm_reset_tr:"))
+async def admin_reset_user_traffic(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    # Вырезаем чистую строку username
+    target_username = callback.data.split(":")[1]
+
+    await callback.answer("🔄 Обнуляю счетчики трафика...")
+
+    # Проверяем наличие пользователя в нашей локальной SQLite
+    async with async_session() as session:
+        query = select(User).where(User.username == target_username)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await callback.message.answer(f"❌ Пользователь <code>{target_username}</code> не найден в БД бота.", parse_mode="HTML")
+        return
+
+    if not db_user.vpn_uuid:
+        await callback.message.answer("ℹ️ Пользователь еще не создал ключи на сервере. Счетчик трафика равен 0 по умолчанию.")
+        return
+
+    # Вызываем метод сброса трафика из класса API
+    api_success = api.reset_traffic(username=db_user.username)
+
+    if not api_success:
+        await callback.message.answer("❌ <b>Ошибка API:</b> Не удалось сбросить счетчики трафика в панели 3x-ui.", parse_mode="HTML")
+        return
+
+    # Перезапрашиваем свежие данные из панели через check_user для обновления экрана админа
+    vpn_info = api.check_user(db_user.username)
+    if not vpn_info:
+        await callback.message.answer("❌ Ошибка: Пользователь пропал с сервера после сброса трафика.")
+        return
+
+    # Рассчитываем актуальный статус онлайн для карточки
+    inbounds_data = api.users()
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    last_online_ms = 0
+    if inbounds_data.get("success"):
+        for inbound in inbounds_data.get("obj", []):
+            for stat in inbound.get("clientStats", []):
+                if stat.get("email") == db_user.username:
+                    last_online_ms = stat.get("lastOnline", 0)
+                    break
+
+    if last_online_ms == 0:
+        online_status = "🔴 Оффлайн (Ни разу не подключался)"
+    elif (now_ms - last_online_ms) < 300000:
+        online_status = "🟢 <b>Онлайн (Подключен)</b>"
+    else:
+        lost_date = datetime.fromtimestamp(last_online_ms / 1000, tz=timezone.utc)
+        online_status = f"🔴 Оффлайн (Был в сети: <code>{lost_date.strftime('%Y-%m-%d %H:%M:%S')} UTC</code>)"
+
+    # Выводим админу обновленную карточку (уже со сброшенным трафиком)
+    user_card_html = (
+        f"👤 <b>КАРТОЧКА ПОЛЬЗОВАТЕЛЯ: {db_user.username.upper()}</b>\n"
+        f"──────────────────\n"
+        f"🆔 Telegram ID: <code>{db_user.telegram_id if db_user.telegram_id else 'Не привязан'}</code>\n"
+        f"📧 Email: <code>{db_user.email}</code>\n"
+        f"📍 Тариф в БД: <code>{db_user.vpn_inbound_remark}</code>\n\n"
+        f"📡 <b>Статус соединения:</b>\n"
+        f"└ Сетевой статус: {online_status}\n\n"
+        f"📊 <b>Параметры VPN (3x-ui):</b>\n"
+        f"├ Доступ до: <code>{vpn_info['expiry_date']}</code>\n"
+        f"└ Трафик: <code>{vpn_info['used_traffic_gb']} ГБ</code> / <code>{vpn_info['limit_traffic_gb']} ГБ</code>\n"
+        f"──────────────────\n"
+        f"✨ <b>Счетчики трафика успешно сброшены на 0.0 ГБ!</b>\n\n"
+        f"🎛️ <i>Выберите действие для изменения параметров клиента:</i>"
+    )
+
+    from bot.keyboards.admin_kb import get_user_manage_keyboard
+    await callback.message.edit_text(
+        text=user_card_html,
+        reply_markup=get_user_manage_keyboard(db_user.username, vpn_info["is_enabled"]),
+        parse_mode="HTML"
+    )
+
 
 # ==========================================
 #      БЛОК : ВОЗВРАТ В АДМИНКУ
