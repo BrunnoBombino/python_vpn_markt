@@ -366,9 +366,9 @@ async def admin_process_search(message: types.Message, state: FSMContext):
     # Формируем карточку админа
     user_card_html = (
         f"👤 <b>КАРТОЧКА ПОЛЬЗОВАТЕЛЯ: {db_user.username.upper()}</b>\n"
-        f"───────────────────\n"
+        f"──────────────────\n"
         f"🆔 Telegram ID: <code>{db_user.telegram_id if db_user.telegram_id else 'Не привязан'}</code>\n"
-        f"📧 Email сайта: <code>{db_user.email}</code>\n"
+        f"📧 Email: <code>{db_user.email}</code>\n"
         f"📅 Регистрация: <code>{db_user.created_at.strftime('%Y-%m-%d')}</code>\n"
         f"📍 Текущий тариф в БД: <code>{db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else 'Не назначен'}</code>\n\n"
         f"📡 <b>Статус соединения:</b>\n"
@@ -376,7 +376,7 @@ async def admin_process_search(message: types.Message, state: FSMContext):
         f"📊 <b>Параметры VPN (3x-ui):</b>\n"
         f"├ Доступ до: <code>{expiry_date_str}</code>\n"
         f"└ Трафик: <code>{used_traffic} ГБ</code> / <code>{limit_traffic} ГБ</code>\n"
-        f"───────────────────\n"
+        f"──────────────────\n"
         f"🎛️ <i>Выберите действие для изменения параметров клиента:</i>"
     )
 
