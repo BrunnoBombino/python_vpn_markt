@@ -10,7 +10,7 @@ from core.database import async_session
 from core.models import User
 from core.init_api import api  # Экземпляр вашего класса API
 from bot.states import RegistrationStates, LinkAccountStates, PromoStates
-from bot.keyboards.user_kb import get_start_keyboard, get_cabinet_keyboard, get_buy_keyboard
+from bot.keyboards.user_kb import get_start_keyboard, get_cabinet_keyboard, get_buy_keyboard, get_link_choice_keyboard
 
 router = Router()
 
@@ -24,6 +24,20 @@ def hash_password(password: str) -> str:
 def check_password(password: str, hashed: str) -> bool:
     """Проверка введенного пароля с хэшем из БД"""
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+
+async def _is_subscription_active(db_user) -> bool:
+    """Вспомогательная функция проверки активности подписки"""
+    # Если это VIP-пользователь (expiry_date == None, а инбаунд VIP) — подписка активна всегда
+    if db_user.vpn_inbound_remark == "VIP" and db_user.expiry_date is None:
+        return True
+
+    # Если дата окончания пустая или в прошлом — подписка неактивна
+    now = datetime.now(timezone.utc)
+    if db_user.expiry_date is None or db_user.expiry_date.replace(tzinfo=timezone.utc) < now:
+        return False
+
+    return True
 
 
 @router.message(CommandStart())
@@ -230,113 +244,129 @@ async def process_link_password(message: types.Message, state: FSMContext):
 #      БЛОК 3: ПОЛУЧЕНИЕ ССЫЛКИ ПОДПИСКИ
 # ==========================================
 
-@router.callback_query(F.data == "get_vpn_link")
-async def process_get_vpn_link(callback: types.CallbackQuery):
-    """
-    Обрабатывает запрос на получение или генерацию ссылки доступа.
-    Проверяет наличие активной подписки в локальной БД.
-    """
+# Открытие меню выбора типа ссылки
+@router.callback_query(F.data == "choose_link_type")
+async def menu_choose_link_type(callback: types.CallbackQuery):
+    text = (
+        "🚀 <b>Выбор типа подключения к VPN</b>\n\n"
+        "Разные приложения поддерживают разные форматы ссылок:\n\n"
+        "🔄 <b>Ссылка-Подписка (HTTPS):</b> Рекомендуется для Hiddifi Next и Streisand. "
+        "Она автоматически обновляет ключи и показывает остаток дней прямо внутри приложения.\n\n"
+        "🔑 <b>Прямой VLESS ключ:</b> Используется для AmneziaVPN, v2rayNG и старых клиентов. "
+    )
+    await callback.message.edit_text(text=text, reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
+    await callback.answer()
+
+
+# Сценарий 1: Выдача Ссылки-Подписки (HTTPS)
+@router.callback_query(F.data == "get_link_sub")
+async def handle_get_sub_link(callback: types.CallbackQuery):
     tg_id = callback.from_user.id
 
-    # Ищем пользователя в нашей локальной БД
     async with async_session() as session:
         query = select(User).where(User.telegram_id == tg_id)
         result = await session.execute(query)
         db_user = result.scalar_one_or_none()
 
     if not db_user:
-        await callback.message.answer("❌ Аккаунт не найден. Напишите /start.")
-        await callback.answer()
+        await callback.message.answer("❌ Аккаунт не найден.")
         return
 
-    # ПРОВЕРКА ПОДПИСКИ: Проверяем, активна ли подписка по времени
-    now = datetime.now(timezone.utc)
-
-    # Если дата окончания пустая (None) или она в прошлом — подписки НЕТ
-    if db_user.expiry_date is None or db_user.expiry_date.replace(tzinfo=timezone.utc) < now:
-        no_subscription_text = (
-            f"⚠️ <b>Доступ ограничен</b>\n\n"
-            f"У вас нет активной подписки или срок её действия истёк.\n"
-            f"Чтобы получить ссылку для подключения к высокоскоростному VPN, "
-            f"пожалуйста, продлите или приобретите подписку.\n\n"
-            f"💳 <i>Вы можете сделать это через меню оплаты на нашем сайте или в боте.</i>"
-        )
-        await callback.message.edit_text(
-            text=no_subscription_text,
-            reply_markup=get_start_keyboard(needs_registration=False),
-            parse_mode="HTML"
-        )
-        await callback.answer()
+    # Проверяем подписку через нашу новую функцию
+    if not await _is_subscription_active(db_user):
+        text = "⚠️ <b>Доступ ограничен</b>\n\nУ вас нет активной подписки. Пожалуйста, приобретите тариф."
+        await callback.message.edit_text(text=text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
         return
 
-    # ЕСЛИ ПОДПИСКА АКТИВНА: Проверяем, создано ли уже подключение в 3x-ui
-    await callback.answer("⏳ Проверяю статус ключей на сервере...")
+    await callback.answer("⏳ Генерирую ссылку подписки...")
 
-    # Название инбаунда по умолчанию, куда будем добавлять (например, "Limit")
-    target_inbound_remark = "Limit"
-
+    # Если пользователя еще нет на сервере 3x-ui — создаем его в дефолтном "limit"
     if not db_user.vpn_uuid or not db_user.vpn_sub_id:
-        # Информируем пользователя о генерации (запрос к API может занять пару секунд)
-        await callback.message.edit_text("⚙️ <b>Создаю ваше персональное VPN подключение...</b>\n"
-                                         "Пожалуйста, подождите несколько секунд.", parse_mode="HTML")
+        target_inbound = "limit"
+        new_vpn_data = api.add_user(username=db_user.username, remark=target_inbound, days=30, telegram_id=tg_id)
 
-        # Вычисляем, сколько дней подписки у него реально осталось в БД, чтобы передать в 3x-ui
-        remaining_time = db_user.expiry_date.replace(tzinfo=timezone.utc) - now
-        days_to_grant = max(1, remaining_time.days)  # Минимум 1 день
-
-        # Вызываем наш метод добавления клиента по его уникальному username
-        new_vpn_data = api.add_user(
-            username=db_user.username,
-            remark=target_inbound_remark,
-            days=days_to_grant
-        )
-
-        if not new_vpn_data:
-            await callback.message.edit_text(
-                "💥 <b>Ошибка сервера</b>\nНе удалось автоматически сгенерировать ключи. "
-                "Пожалуйста, обратитесь в поддержку или попробуйте позже.",
-                reply_markup=get_start_keyboard(needs_registration=False),
-                parse_mode="HTML"
-            )
+        if new_vpn_data:
+            async with async_session() as session:
+                query = select(User).where(User.telegram_id == tg_id)
+                res = await session.execute(query)
+                u = res.scalar_one()
+                u.vpn_uuid = new_vpn_data.get("uuid")
+                u.vpn_sub_id = new_vpn_data.get("sub_id", new_vpn_data.get("subId"))
+                u.vpn_inbound_remark = target_inbound
+                await session.commit()
+            # Перечитываем обновленный subId
+            db_user_username = db_user.username
+        else:
+            await callback.message.edit_text("❌ Ошибка генерации ключей на сервере VPN.",
+                                             reply_markup=get_link_choice_keyboard())
             return
-
-        # Записываем сгенерированные панелью UUID и subId в нашу локальную БД к этому пользователю
-        async with async_session() as session:
-            # Снова подтягиваем пользователя для обновления в сессии
-            query = select(User).where(User.telegram_id == tg_id)
-            res = await session.execute(query)
-            user_to_update = res.scalar_one()
-
-            user_to_update.vpn_uuid = new_vpn_data["uuid"]
-            user_to_update.vpn_sub_id = new_vpn_data["sub_id"]
-            user_to_update.vpn_inbound_remark = target_inbound_remark
-
-            await session.commit()
-
-        # Обновляем переменные в текущей памяти функции
-        db_user_sub_id = new_vpn_data["sub_id"]
     else:
-        # Если подключение уже было создано ранее — просто берем готовый sub_id из БД
-        db_user_sub_id = db_user.vpn_sub_id
+        db_user_username = db_user.username
 
-    # Выдаем готовую ссылку подписки
-    # Метод сам подставит правильный порт 2096 без секретного пути панели
-    sub_link = api.get_subscription_link(db_user.username)
+    # Получаем чистый HTTPS URL подписки
+    sub_link = api.get_subscription_link(db_user_username)
 
     success_text = (
-        f"🚀 <b>Ваш VPN готов к подключению!</b>\n\n"
-        f"📅 Подписка активна до: <code>{db_user.expiry_date.strftime('%Y-%m-%d %H:%M:%S')} UTC</code>\n\n"
-        f"🔄 <b>Ваша индивидуальная ссылка подписки:</b>\n"
+        f"🔄 <b>Ваша ссылка-подписка готовa!</b>\n\n"
         f"<code>{sub_link}</code>\n\n"
-        f"👇 <i>Нажмите на текст ссылки выше, чтобы скопировать её. "
-        f"Затем откройте Hiddifi / Streisand и выберите 'Импортировать из буфера обмена'.</i>"
+        f"👇 <i>Нажмите на текст выше, чтобы скопировать. Настройка для <b>Hiddifi / Streisand</b>.</i>"
     )
+    await callback.message.edit_text(text=success_text, reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
 
-    await callback.message.edit_text(
-        text=success_text,
-        reply_markup=get_start_keyboard(needs_registration=False),
-        parse_mode="HTML"
+
+# Сценарий 2: Выдача Прямого VLESS Ключа (vless://...)
+@router.callback_query(F.data == "get_link_vless")
+async def handle_get_vless_link(callback: types.CallbackQuery):
+    tg_id = callback.from_user.id
+
+    async with async_session() as session:
+        query = select(User).where(User.telegram_id == tg_id)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await callback.message.answer("❌ Аккаунт не найден.")
+        return
+
+    if not await _is_subscription_active(db_user):
+        text = "⚠️ <b>Доступ ограничен</b>\n\nУ вас нет active-подписки. Пожалуйста, приобретите тариф."
+        await callback.message.edit_text(text=text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
+        return
+
+    await callback.answer("⏳ Генерирую прямой VLESS ключ...")
+
+    # Если пользователя еще нет на сервере 3x-ui — создаем
+    if not db_user.vpn_uuid:
+        target_inbound = "limit"
+        new_vpn_data = api.add_user(username=db_user.username, remark=target_inbound, days=30, telegram_id=tg_id)
+
+        if new_vpn_data:
+            async with async_session() as session:
+                query = select(User).where(User.telegram_id == tg_id)
+                res = await session.execute(query)
+                u = res.scalar_one()
+                u.vpn_uuid = new_vpn_data.get("uuid")
+                u.vpn_sub_id = new_vpn_data.get("sub_id", new_vpn_data.get("subId"))
+                u.vpn_inbound_remark = target_inbound
+                await session.commit()
+            db_user_username = db_user.username
+        else:
+            await callback.message.edit_text("❌ Ошибка генерации ключей на сервере VPN.",
+                                             reply_markup=get_link_choice_keyboard())
+            return
+    else:
+        db_user_username = db_user.username
+
+    # Получаем прямую vless://... строку, используя метод, который мы детально отлаживали символ в символ
+    vless_link = api.get_client_link(db_user_username)
+
+    success_text = (
+        f"🔑 <b>Ваш прямой VLESS ключ готов!</b>\n\n"
+        f"<code>{vless_link}</code>\n\n"
+        f"👇 <i>Нажмите на текст выше, чтобы скопировать. Настройка для <b>AmneziaVPN / v2rayNG</b>.</i>"
     )
+    await callback.message.edit_text(text=success_text, reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
+
 
 # ==========================================
 #      БЛОК 4: ЛИЧНЫЙ КАБИНЕТ
