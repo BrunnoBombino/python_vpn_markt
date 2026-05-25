@@ -13,9 +13,8 @@ from core.models import User
 from bot.states import AdminPromoStates
 from bot.keyboards.admin_kb import get_admin_main_keyboard
 
-# Импортируем роутер из текущей папки handlers (__init__.py)
-from . import router
 
+router = Router()
 
 # Путь к файлу хранения промокодов (в корне проекта)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -130,7 +129,7 @@ async def admin_view_promos(callback: types.CallbackQuery):
     else:
         text = "📋 <b>Активные промокоды в файле:</b>\n\n"
         for code, info in all_promos.items():
-            text += f"🎫 <code>{code}</code>\n⏰ Истекает: {info['expires_at']}\n───────────────────\n"
+            text += f"🎫 <code>{code}</code>\n⏰ Истекает: {info['expires_at']}\n────────────────\n"
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")]

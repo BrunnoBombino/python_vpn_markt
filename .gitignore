@@ -5,3 +5,4 @@ backup_lost_users.txt
 .idea
 users.db
 tests.py
+promocodes.json
