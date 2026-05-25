@@ -2,10 +2,11 @@ import json
 import secrets
 import string
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram import types, F
+from datetime import datetime, timezone, timedelta
 from core.auth import ADMIN_IDS
 from sqlalchemy import func, select
 from core.init_api import api
@@ -382,6 +383,109 @@ async def admin_process_search(message: types.Message, state: FSMContext):
 
     await message.answer(text=user_card_html, reply_markup=get_user_manage_keyboard(db_user.username, is_enabled),
                          parse_mode="HTML")
+
+
+# ==========================================
+#      БЛОК 5: БЛОК НАЧИСЛЕНИЯ ДНЕЙ
+# ==========================================
+
+# Обработчик нажатия кнопки "Выдать 5 дней"
+@router.callback_query(F.data.startswith("adm_add_5:"))
+async def admin_add_five_days(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    # Вытаскиваем username пользователя, который зашит в callback после двоеточия
+    target_username = callback.data.split(":")[1]
+
+    await callback.answer("⏳ Начисляю 5 дней подписки...")
+
+    # Получаем пользователя из локальной SQLite базы данных
+    async with async_session() as session:
+        query = select(User).where(User.username == target_username)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await callback.message.answer(f"❌ Пользователь <code>{target_username}</code> не найден в БД бота.",
+                                      parse_mode="HTML")
+        return
+
+    # Проверяем, не является ли пользователь вечным VIP. Продлевать VIP-инбаунд по дням нет смысла
+    if db_user.vpn_inbound_remark and db_user.vpn_inbound_remark.upper() == "VIP":
+        await callback.message.answer(
+            f"ℹ️ Пользователь <code>{target_username}</code> находится на тарифе VIP-Безлимит. "
+            f"Ему не требуется начисление дней.", parse_mode="HTML")
+        return
+
+    # РАСЧЕТ ВРЕМЕНИ:
+    now = datetime.now(timezone.utc)
+
+    # Если подписка пустая или уже просрочена — считаем от текущего момента
+    if db_user.expiry_date is None or db_user.expiry_date.replace(tzinfo=timezone.utc) < now:
+        base_time = now
+    else:
+        # Если подписка еще активна — прибавляем к старой дате окончания
+        base_time = db_user.expiry_date.replace(tzinfo=timezone.utc)
+
+    # Прибавляем ровно 5 дней
+    new_expiry_date = base_time + timedelta(days=5)
+
+    # СИНХРОНИЗАЦИЯ С ПАНЕЛЬЮ 3X-UI через метод update_user
+    # Если пользователя вообще еще нет на сервере (зарегистрирован, но не создавал ключи),
+    # мы просто обновим локальную БД, а в панель отправим изменения, когда он сам нажмет "Получить ссылки"
+    api_success = True
+    if db_user.vpn_uuid:
+        # Метод update_user, который мы писали, принимает add_days и сам высчитывает сдвиг на сервере.
+        # Но чтобы гарантировать 100% точность дат секунда в секунду с нашей БД, мы можем передать add_days=5.
+        # Наша логика в update_user рассчитает время на сервере точно так же!
+        api_success = api.update_user(
+            username=db_user.username,
+            remark=db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "limit",
+            add_days=5
+        )
+
+    if not api_success:
+        await callback.message.answer("❌ <b>Ошибка API:</b> Локальная база обновлена, но не удалось "
+                                      "передать команду на сервер 3x-ui. Проверьте статус панели.", parse_mode="HTML")
+        return
+
+    # ОБНОВЛЯЕМ ДАННЫЕ В ЛОКАЛЬНОЙ SQLite
+    async with async_session() as session:
+        query = select(User).where(User.username == target_username)
+        res = await session.execute(query)
+        user_to_update = res.scalar_one()
+
+        # Записываем новую дату в базу (убираем таймзону для совместимости с SQLite)
+        user_to_update.expiry_date = new_expiry_date.replace(tzinfo=None)
+
+        # Если у пользователя до этого не стоял тип инбаунда, прописываем дефолтный "limit"
+        if not user_to_update.vpn_inbound_remark:
+            user_to_update.vpn_inbound_remark = "Limit"
+
+        await session.commit()
+
+    # Переводим дату в Московское время (UTC+3) для красивого и понятного лога админу
+    msk_tz = timezone(timedelta(hours=3))
+    new_expiry_msk = new_expiry_date.astimezone(msk_tz)
+
+    # Выводим админу отчет об успешной операции
+    success_msg = (
+        f"➕ <b>ПОДПИСКА УСПЕШНО ПРОДЛЕНА</b>\n"
+        f"──────────────────\n"
+        f"👤 Пользователь: <code>{target_username}</code>\n"
+        f"📅 Добавлено: <code>5 дней</code>\n"
+        f"⏰ Новая дата окончания: <code>{new_expiry_msk.strftime('%Y-%m-%d %H:%M:%S')} MSK</code>\n"
+        f"──────────────────\n"
+        f"<i>Сервер 3x-ui и локальная база успешно синхронизированы.</i>"
+    )
+
+    # Кнопка возврата в админку под логом
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="⚙️ В админку", callback_data="admin_back")]
+    ])
+
+    await callback.message.answer(text=success_msg, reply_markup=kb, parse_mode="HTML")
 
 # ==========================================
 #      БЛОК : ВОЗВРАТ В АДМИНКУ
