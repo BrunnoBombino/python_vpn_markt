@@ -296,7 +296,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
     await callback.message.edit_text(text=stats_html, reply_markup=kb, parse_mode="HTML")
 
 # ==========================================
-#      БЛОК : ВОЗВРАТ В АДМИНКУ
+#      БЛОК 4: ПОИСК ПОЛЬЗОВАТЕЛЯ
 # ==========================================
 
 # Включение режима поиска
