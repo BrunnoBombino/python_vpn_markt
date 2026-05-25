@@ -35,7 +35,9 @@ def get_link_choice_keyboard() -> InlineKeyboardMarkup:
 def get_buy_keyboard() -> InlineKeyboardMarkup:
     """Интерфейс выбора тарифов и промокодов"""
     buttons = [
-        [InlineKeyboardButton(text="🍏 Тариф Стандарт - 30 дней", callback_data="buy_tariff_standard")],
+        [InlineKeyboardButton(text="🍏 Тариф 30 дней", callback_data="buy_tariff_30")],
+        [InlineKeyboardButton(text="🍎 Тариф 180 дней", callback_data="buy_tariff_180")],
+        [InlineKeyboardButton(text="🍍 Тариф 365 дней", callback_data="buy_tariff_365")],
         [InlineKeyboardButton(text="🎫 Ввести промокод", callback_data="enter_promo")],
         [InlineKeyboardButton(text="⬅️ Назад в кабинет", callback_data="open_cabinet")]
     ]

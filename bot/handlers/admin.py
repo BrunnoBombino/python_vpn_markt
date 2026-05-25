@@ -2,7 +2,7 @@ import json
 import secrets
 import string
 from pathlib import Path
-from aiogram import Router, types, F
+from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram import types, F
