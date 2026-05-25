@@ -11,3 +11,6 @@ class LinkAccountStates(StatesGroup):
 
 class PromoStates(StatesGroup):
     waiting_for_code = State()  # Ожидание ввода промокода текстом
+
+class AdminPromoStates(StatesGroup):
+    waiting_for_days = State()  # Ждем количество дней действия промокода
