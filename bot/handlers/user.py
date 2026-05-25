@@ -494,17 +494,55 @@ async def process_promo_code(message: types.Message, state: FSMContext):
     promo_entered = message.text.strip().upper()
     await state.clear()
 
-    # Валидные промокоды
-    VALID_PROMO_CODES = ["FREEVIP", "PROMO2026", "VPNUNLIMITED"]
+    # === ИСПРАВЛЕНО: Читаем промокоды динамически из JSON-файла ===
+    from pathlib import Path
+    import json
+    from datetime import datetime, timezone
 
-    if promo_entered not in VALID_PROMO_CODES:
-        await message.answer("❌ <b>Ошибка:</b> Неверный или устаревший промокод!",
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+    PROMO_FILE = BASE_DIR / "promocodes.json"
+
+    # Загружаем промокоды
+    all_promos = {}
+    if PROMO_FILE.exists() and PROMO_FILE.stat().st_size > 0:
+        try:
+            with open(PROMO_FILE, "r", encoding="utf-8") as f:
+                all_promos = json.load(f)
+        except Exception:
+            pass
+
+    # Проверяем, существует ли вообще такой код в файле
+    if promo_entered not in all_promos:
+        await message.answer("❌ <b>Ошибка:</b> Неверный или использованный промокод!",
                              reply_markup=get_buy_keyboard(), parse_mode="HTML")
         return
 
+    # Проверяем, не истек ли срок действия самого промокода
+    promo_info = all_promos[promo_entered]
+    expires_str = promo_info["expires_at"].replace(" UTC", "")
+    try:
+        expires_date = datetime.strptime(expires_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires_date:
+            # Если промокод просрочен, удаляем его из файла, чтобы не занимал место
+            del all_promos[promo_entered]
+            with open(PROMO_FILE, "w", encoding="utf-8") as f:
+                json.dump(all_promos, f, indent=4, ensure_ascii=False)
+
+            await message.answer("❌ <b>Ошибка:</b> Срок действия этого промокода уже истек!",
+                                 reply_markup=get_buy_keyboard(), parse_mode="HTML")
+            return
+    except Exception:
+        pass  # Если с парсингом даты сбой, пропускаем проверку времени ради надежности
+
+    # === ЕСЛИ ВСЁ ОК — УДАЛЯЕМ ПРОМОКОД ИЗ ФАЙЛА (ТАК КАК ОН ИСПОЛЬЗОВАН) ===
+    del all_promos[promo_entered]
+    with open(PROMO_FILE, "w", encoding="utf-8") as f:
+        json.dump(all_promos, f, indent=4, ensure_ascii=False)
+    # =======================================================================
+
     tg_id = message.from_user.id
 
-    # 1. Получаем пользователя из локальной БД
+    # Получаем пользователя из локальной БД
     async with async_session() as session:
         query = select(User).where(User.telegram_id == tg_id)
         result = await session.execute(query)
@@ -518,7 +556,7 @@ async def process_promo_code(message: types.Message, state: FSMContext):
     target_vip_remark = "VIP"
     transfer_success = False
 
-    # 2. ПРОВЕРКА: Создан ли пользователь в панели 3x-ui?
+    # ПРОВЕРКА: Создан ли пользователь в панели 3x-ui?
     # Если vpn_uuid пустой, значит пользователя на сервере VPN ЕЩЕ НЕТ
     if not db_user.vpn_uuid or not db_user.vpn_sub_id:
         print(f"⭐ Новый пользователь {db_user.username}. Создаю аккаунт сразу в VIP...")
@@ -548,7 +586,7 @@ async def process_promo_code(message: types.Message, state: FSMContext):
 
             transfer_success = True
 
-    # 3. Если пользователь УЖЕ СУЩЕСТВОВАЛ в панели, делаем стандартный безопасный перенос
+    # Если пользователь УЖЕ СУЩЕСТВОВАЛ в панели, делаем стандартный безопасный перенос
     else:
         print(f"🔄 Существующий пользователь {db_user.username}. Переношу из {db_user.vpn_inbound_remark} в VIP...")
         current_remark = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "Limit"
@@ -571,7 +609,7 @@ async def process_promo_code(message: types.Message, state: FSMContext):
                 user_to_update.expiry_date = None  # Сбрасываем ограничение времени в локальной БД
                 await session.commit()
 
-    # 4. Выводим результат пользователю
+    # Выводим результат пользователю
     if transfer_success:
         success_text = (
             "⭐ <b>Промокод успешно активирован!</b>\n\n"
