@@ -96,13 +96,15 @@ async def admin_process_promo_days(message: types.Message, state: FSMContext):
     promo_code = f"VIP-{part1}-{part2}"
 
     # Расчет дат создания и окончания действия промокода
-    now = datetime.now(timezone.utc)
-    end_date = now + timedelta(days=days)
+    # === Задаем Московское время (UTC+3) ===
+    msk_tz = timezone(timedelta(hours=3))
+    now_msk = datetime.now(msk_tz)
+    end_date_msk = now_msk + timedelta(days=days)
 
-    # Структура данных промокода
+    # Формируем структуру с пометкой MSK
     promo_data = {
-        "created_at": now.strftime("%Y-%m-%d %H:%M:%S") + " UTC",
-        "expires_at": end_date.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+        "created_at": now_msk.strftime("%Y-%m-%d %H:%M:%S") + " MSK",
+        "expires_at": end_date_msk.strftime("%Y-%m-%d %H:%M:%S") + " MSK"
     }
 
     # Запись в файл
@@ -161,7 +163,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
 
     await callback.answer("📊 Считаю тарифы VIP и Limit по инбаундам...")
 
-    # 1. Получаем общее число пользователей из локальной SQLite
+    # Получаем общее число пользователей из локальной SQLite
     async with async_session() as session:
         total_users_query = select(func.count(User.id))
         total_users_res = await session.execute(total_users_query)
@@ -173,7 +175,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
         users_map_res = await session.execute(users_map_query)
         db_users_tariffs = {row[0]: row[1] for row in users_map_res.all() if row[0]}
 
-    # 2. Запрашиваем живые данные из API 3x-ui
+    # Запрашиваем живые данные из API 3x-ui
     inbounds_data = api.users()
 
     inbounds_stats_text = ""
@@ -243,7 +245,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
     else:
         inbounds_stats_text = "❌ <i>Не удалось получить данные из панели 3x-ui</i>\n\n"
 
-    # 3. Переводим общий трафик в читаемый формат
+    # Переводим общий трафик в читаемый формат
     bytes_in_gb = 1024 ** 3
     bytes_in_tb = 1024 ** 4
     if global_total_bytes >= bytes_in_tb:
@@ -251,7 +253,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
     else:
         global_traffic_formatted = f"<code>{round(global_total_bytes / bytes_in_gb, 2)} ГБ</code>"
 
-    # 4. Вывод итогового HTML-экрана
+    # Вывод итогового HTML-экрана
     stats_html = (
         f"📊 <b>СВОДНАЯ СТАТИСТИКА СЕРВЕРА</b>\n\n"
         f"👥 <b>База данных сайта/бота:</b>\n"
@@ -271,7 +273,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
     ])
     await callback.message.edit_text(text=stats_html, reply_markup=kb, parse_mode="HTML")
 
-    # 4. Вывод итогового HTML-экрана
+    # Вывод итогового HTML-экрана
     stats_html = (
         f"📊 <b>СВОДНАЯ СТАТИСТИКА СЕРВЕРА</b>\n\n"
         f"👥 <b>База данных сайта/бота:</b>\n"

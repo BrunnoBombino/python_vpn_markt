@@ -4,7 +4,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, or_
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from core.database import async_session
 from core.models import User
@@ -494,7 +494,7 @@ async def process_promo_code(message: types.Message, state: FSMContext):
     promo_entered = message.text.strip().upper()
     await state.clear()
 
-    # === ИСПРАВЛЕНО: Читаем промокоды динамически из JSON-файла ===
+    # Читаем промокоды динамически из JSON-файла
     from pathlib import Path
     import json
     from datetime import datetime, timezone
@@ -511,33 +511,40 @@ async def process_promo_code(message: types.Message, state: FSMContext):
         except Exception:
             pass
 
-    # Проверяем, существует ли вообще такой код в файле
-    if promo_entered not in all_promos:
-        await message.answer("❌ <b>Ошибка:</b> Неверный или использованный промокод!",
-                             reply_markup=get_buy_keyboard(), parse_mode="HTML")
-        return
-
-    # Проверяем, не истек ли срок действия самого промокода
-    promo_info = all_promos[promo_entered]
-    expires_str = promo_info["expires_at"].replace(" UTC", "")
-    try:
-        expires_date = datetime.strptime(expires_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) > expires_date:
-            # Если промокод просрочен, удаляем его из файла, чтобы не занимал место
-            del all_promos[promo_entered]
-            with open(PROMO_FILE, "w", encoding="utf-8") as f:
-                json.dump(all_promos, f, indent=4, ensure_ascii=False)
-
-            await message.answer("❌ <b>Ошибка:</b> Срок действия этого промокода уже истек!",
+        # Проверяем, существует ли вообще такой код в файле
+        if promo_entered not in all_promos:
+            await message.answer("❌ <b>Ошибка:</b> Неверный или использованный промокод!",
                                  reply_markup=get_buy_keyboard(), parse_mode="HTML")
             return
-    except Exception:
-        pass  # Если с парсингом даты сбой, пропускаем проверку времени ради надежности
 
-    # === ЕСЛИ ВСЁ ОК — УДАЛЯЕМ ПРОМОКОД ИЗ ФАЙЛА (ТАК КАК ОН ИСПОЛЬЗОВАН) ===
-    del all_promos[promo_entered]
-    with open(PROMO_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_promos, f, indent=4, ensure_ascii=False)
+        # ПРОВЕРЯЕМ СРОК ДЕЙСТВИЯ (С поправкой на МСК)
+        promo_info = all_promos[promo_entered]
+
+        # Очищаем строку от суффикса для правильного парсинга
+        expires_str = promo_info["expires_at"].replace(" MSK", "")
+        try:
+            # Паузим строку времени и принудительно выставляем часовой пояс МСК (UTC+3)
+            msk_tz = timezone(timedelta(hours=3))
+            expires_date_msk = datetime.strptime(expires_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=msk_tz)
+
+            # Сравниваем с текущим временем по МСК
+            if datetime.now(msk_tz) > expires_date_msk:
+                # Если промокод просрочен, удаляем его из файла
+                del all_promos[promo_entered]
+                with open(PROMO_FILE, "w", encoding="utf-8") as f:
+                    json.dump(all_promos, f, indent=4, ensure_ascii=False)
+
+                await message.answer("❌ <b>Ошибка:</b> Срок действия этого промокода уже истек!",
+                                     reply_markup=get_buy_keyboard(), parse_mode="HTML")
+                return
+        except Exception as e:
+            print(f"⚠️ Ошибка валидации времени промокода: {e}")
+            pass  # Ради отказоустойчивости пропускаем, если дата повредилась
+
+        # === ЕСЛИ ВСЁ ОК — УДАЛЯЕМ ПРОМОКОД ИЗ ФАЙЛА ===
+        del all_promos[promo_entered]
+        with open(PROMO_FILE, "w", encoding="utf-8") as f:
+            json.dump(all_promos, f, indent=4, ensure_ascii=False)
     # =======================================================================
 
     tg_id = message.from_user.id
