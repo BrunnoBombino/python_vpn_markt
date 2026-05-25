@@ -275,7 +275,7 @@ class API:
             print(f"❌ Ошибка API при удалении: {response.text}")
             return False
 
-    def update_user(self, username, remark, new_username=None, new_uuid=None, add_days=None):
+    def update_user(self, username, remark, new_username=None, new_uuid=None, add_days=None, enable_status=None):
         """
                 Обновляет данные клиента (Email, UUID, Время) строго внутри одного инбаунда.
 
@@ -327,20 +327,18 @@ class API:
         if new_username:
             client_data["email"] = new_username
         if new_uuid:
-            new_uuid = str(uuid.uuid1())
             client_data["id"] = new_uuid
+        if enable_status is not None:
+            client_data["enable"] = bool(enable_status)
 
         # Добавляем дни к текущему остатку
         if add_days is not None:
             current_expiry = client_data.get("expiryTime", 0)
             now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-
-            # Если аккаунт безлимитный (0) или подписка уже истекла, считаем от текущего момента
             if current_expiry <= now_ms:
                 base_time = datetime.now(timezone.utc)
             else:
                 base_time = datetime.fromtimestamp(current_expiry / 1000, tz=timezone.utc)
-
             new_expiry_date = base_time + timedelta(days=add_days)
             client_data["expiryTime"] = int(new_expiry_date.timestamp() * 1000)
 
@@ -356,13 +354,10 @@ class API:
         url = f"{self.host}/panel/api/inbounds/updateClient/{old_uuid}"
         response = self.ses.post(url, json=payload)
 
-        # 5. Проверяем результат
+        # Проверяем результат
         if response.status_code == 200 and response.json().get("success"):
             print(f"✅ Данные пользователя '{username}' успешно обновлены.")
-            if add_days:
-                final_date = datetime.fromtimestamp(client_data["expiryTime"] / 1000, tz=timezone.utc)
-                print(f"📅 Новая дата отключения: {final_date.strftime('%Y-%m-%d %H:%M:%S')} UTC")
-            return client_data
+            return client_data  # Возвращаем измененный объект клиента
         else:
             print(f"❌ Ошибка API при обновлении: {response.text}")
             return False
