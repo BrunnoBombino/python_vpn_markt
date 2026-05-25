@@ -487,7 +487,6 @@ async def admin_add_five_days(callback: types.CallbackQuery):
 
     await callback.message.answer(text=success_msg, reply_markup=kb, parse_mode="HTML")
 
-
 # ==========================================
 #      БЛОК 6: УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ
 # ==========================================
@@ -554,6 +553,106 @@ async def admin_delete_user_completely(callback: types.CallbackQuery):
     ])
 
     await callback.message.answer(text=delete_msg, reply_markup=kb, parse_mode="HTML")
+
+# ==========================================
+#      БЛОК 7: ОТКЛЮЧЕНИЕ ПОЛЬЗОВАТЕЛЯ
+# ==========================================
+
+# Обработчик кнопки принудительной блокировки/разблокировки
+@router.callback_query(F.data.startswith("adm_toggle_block:"))
+async def admin_toggle_user_block(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    # Вырезаем username из callback_data кнопки
+    target_username = callback.data.split(":")
+
+    await callback.answer("⚙️ Изменяю статус доступа...")
+
+    # Запрашиваем информацию из нашей SQLite, чтобы узнать инбаунд
+    async with async_session() as session:
+        query = select(User).where(User.username == target_username)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await callback.message.answer(f"❌ Пользователь <code>{target_username}</code> не найден в базе.",
+                                      parse_mode="HTML")
+        return
+
+    # Если у пользователя еще нет ключей в панели (новый аккаунт), блокировать пока нечего
+    if not db_user.vpn_uuid:
+        await callback.message.answer(
+            "ℹ️ Пользователь еще не создал подключение на сервере VPN. Блокировка невозможна.")
+        return
+
+    # Опрашиваем живую панель через check_user, чтобы узнать текущий статус (включен или выключен)
+    vpn_info = api.check_user(db_user.username)
+    if not vpn_info:
+        await callback.message.answer("❌ Ошибка: Пользователь пропал с сервера VPN. Попробуйте обновить его ссылки.")
+        return
+
+    current_status = vpn_info["is_enabled"]  # True (работает) или False (заблокирован)
+
+    # Инвертируем статус для отправки в панель (если работал — выключаем, если лежал — включаем)
+    new_status = not current_status
+    inbound_remark = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "limit"
+
+    # Отправляем команду обновления в метод update_user
+    api_result = api.update_user(
+        username=db_user.username,
+        remark=inbound_remark,
+        enable_status=new_status
+    )
+
+    if not api_result:
+        await callback.message.answer("❌ <b>Ошибка API:</b> Не удалось переключить статус блокировки на сервере 3x-ui.",
+                                      parse_mode="HTML")
+        return
+
+    # ОБНОВЛЯЕМ ЭКРАН: Генерируем новую карточку пользователя с обновленными данными
+    # Повторно рассчитываем статус онлайн для вывода
+    inbounds_data = api.users()
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    last_online_ms = 0
+    if inbounds_data.get("success"):
+        for inbound in inbounds_data.get("obj", []):
+            for stat in inbound.get("clientStats", []):
+                if stat.get("email") == db_user.username:
+                    last_online_ms = stat.get("lastOnline", 0)
+                    break
+
+    if last_online_ms == 0:
+        online_status = "🔴 Оффлайн (Ни разу не подключался)"
+    elif (now_ms - last_online_ms) < 300000:
+        online_status = "🟢 <b>Онлайн (Подключен)</b>"
+    else:
+        lost_date = datetime.fromtimestamp(last_online_ms / 1000, tz=timezone.utc)
+        online_status = f"🔴 Оффлайн (Был в сети: <code>{lost_date.strftime('%Y-%m-%d %H:%M:%S')} UTC</code>)"
+
+    status_emoji = "🟢 АКТИВЕН" if new_status else "🔴 ЗАБЛОКИРОВАН"
+
+    user_card_html = (
+        f"👤 <b>КАРТОЧКА ПОЛЬЗОВАТЕЛЯ: {db_user.username.upper()}</b>\n"
+        f"──────────────────\n"
+        f"🆔 Telegram ID: <code>{db_user.telegram_id if db_user.telegram_id else 'Не привязан'}</code>\n"
+        f"📧 Email: <code>{db_user.email}</code>\n"
+        f"📍 Тариф в БД: <code>{db_user.vpn_inbound_remark}</code>\n\n"
+        f"📡 <b>Статус соединения:</b>\n"
+        f"└ Сетевой статус: {online_status}\n\n"
+        f"📊 <b>Параметры VPN (3x-ui):</b>\n"
+        f"├ Доступ до: <code>{vpn_info['expiry_date']}</code>\n"
+        f"└ Трафик: <code>{vpn_info['used_traffic_gb']} ГБ</code> / <code>{vpn_info['limit_traffic_gb']} ГБ</code>\n"
+        f"──────────────────\n"
+        f"⚠️ <b>Статус успешно изменен на: {status_emoji}</b>\n\n"
+        f"🎛️ <i>Выберите действие для изменения параметров клиента:</i>"
+    )
+
+    # Импортируем клавиатуру, она автоматически подставит правильный текст кнопки ("Заблокировать" или "Разблокировать")
+    from bot.keyboards.admin_kb import get_user_manage_keyboard
+    await callback.message.edit_text(text=user_card_html,
+                                     reply_markup=get_user_manage_keyboard(db_user.username, new_status),
+                                     parse_mode="HTML")
 
 
 # ==========================================
