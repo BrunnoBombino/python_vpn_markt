@@ -26,6 +26,21 @@ def check_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 
+def make_progress_bar(used_gb: float, limit_gb: float, bar_length: int = 10) -> str:
+    """Генерирует визуальную полосу прогресса трафика"""
+    if limit_gb <= 0:
+        return "♾️ " + "■" * bar_length  # Для безлимита полоса всегда полная
+
+    percent = used_gb / limit_gb
+    filled_length = int(round(bar_length * percent))
+    # Защита от выхода за границы, если пользователь скачал больше лимита
+    if filled_length > bar_length:
+        filled_length = bar_length
+
+    bar = "■" * filled_length + "□" * (bar_length - filled_length)
+    return f"|{bar}| {int(percent * 100)}%"
+
+
 async def _is_subscription_active(db_user) -> bool:
     """Вспомогательная функция проверки активности подписки"""
     # Если это VIP-пользователь (expiry_date == None, а инбаунд VIP) — подписка активна всегда
@@ -581,3 +596,98 @@ async def back_to_main_menu(callback: types.CallbackQuery):
 # ==========================================
 #      БЛОК 8: ИНФОРМАЦИЯ ОБ АККАУНТЕ
 # ==========================================
+
+@router.callback_query(F.data == "user_profile")
+async def view_user_profile(callback: types.CallbackQuery):
+    """
+    Отображает подробную информацию о текущем состоянии аккаунта:
+    тариф, баланс трафика с полосой прогресса и статус.
+    """
+    tg_id = callback.from_user.id
+
+    # Получаем данные пользователя из локальной SQLite
+    async with async_session() as session:
+        query = select(User).where(User.telegram_id == tg_id)
+        result = await session.execute(query)
+        db_user = result.scalar_one_or_none()
+
+    if not db_user:
+        await callback.message.answer("❌ Ваш аккаунт не найден. Пожалуйста, введите /start.")
+        await callback.answer()
+        return
+
+    await callback.answer("⏳ Загружаю статистику...")
+
+    # Проверяем, создан ли пользователь в панели 3x-ui
+    if not db_user.vpn_uuid:
+        # Если ключей еще нет (пользователь ни разу не нажимал "Получить ссылки" и не вводил промокод)
+        text = (
+            f"👤 <b>Профиль:</b> <code>{db_user.username}</code>\n"
+            f"📧 <b>Email:</b> <code>{db_user.email}</code>\n\n"
+            f"📊 <b>Тип подписки:</b> Подключение еще не активировано\n"
+            f"⚪ <b>Статус VPN:</b> Не создан\n\n"
+            f"<i>Чтобы активировать ключи и запустить счетчики, перейдите в раздел "
+            f"'🚀 Получить VPN ссылки' или активируйте промокод в меню оплаты.</i>"
+        )
+        from bot.keyboards.user_kb import get_cabinet_keyboard
+        await callback.message.edit_text(text=text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
+        return
+
+    # Если пользователь есть в панели, запрашиваем живую статистику трафика через check_user
+    api_info = api.check_user(db_user.username)
+
+    if not api_info:
+        # Если в БД данные есть, а check_user вернул None (пользователя удалили из панели)
+        # Мы не выводим None, а вежливо сообщаем и предлагаем восстановиться
+        text = (
+            f"👤 <b>Профиль:</b> <code>{db_user.username}</code>\n\n"
+            f"⚠️ <b>Внимание:</b> Ваша конфигурация на VPN-сервере отсутствует.\n"
+            f"Возможно, произошли технические работы.\n\n"
+            f"👇 <i>Пожалуйста, перейдите в меню '🚀 Получить VPN ссылки', "
+            f"система автоматически пересоздаст ваше подключение.</i>"
+        )
+        from bot.keyboards.user_kb import get_cabinet_keyboard
+        await callback.message.edit_text(text=text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
+        return
+
+    # Формируем динамические данные для экрана
+    is_vip = api_info["inbound_remark"].upper() == "VIP"
+
+    # Определяем тип тарифа
+    tariff_type = "⭐ VIP-Безлимит (Бессрочный)" if is_vip else "🍏 Лимитированный Стандарт"
+
+    # Определяем статус
+    status_text = "🟢 АКТИВЕН" if api_info["is_enabled"] else "🔴 ЗАБЛОКИРОВАН"
+
+    # Формируем строку даты окончания подписки
+    expiry_str = "♾️ Неограниченно" if is_vip else api_info["expiry_date"]
+
+    # Рассчитываем и рисуем Progress Bar трафика
+    used_gb = api_info["used_traffic_gb"]
+    limit_raw = api_info["limit_traffic_gb"]
+
+    if is_vip or limit_raw == "Безлимит":
+        limit_gb = 0
+        traffic_detail_str = f"<code>{used_gb} ГБ</code> / <code>♾️ Безлимит</code>"
+        progress_bar = make_progress_bar(used_gb, 0)
+    else:
+        limit_gb = float(limit_raw)
+        traffic_detail_str = f"<code>{used_gb} ГБ</code> / <code>{limit_gb} ГБ</code>"
+        progress_bar = make_progress_bar(used_gb, limit_gb)
+
+    # 5. Собираем итоговое HTML сообщение
+    profile_html = (
+        f"📋 <b>ИНФОРМАЦИЯ ОБ АККАУНТЕ</b>\n\n"
+        f"👤 <b>Пользователь:</b> <code>{api_info['username']}</code>\n"
+        f"📧 <b>Email:</b> <code>{db_user.email}</code>\n"
+        f"📍 <b>Текущий тариф:</b> {tariff_type}\n\n"
+        f"📊 <b>Статус VPN:</b> {status_text}\n"
+        f"📅 <b>Доступ до:</b> {expiry_str}\n\n"
+        f"📉 <b>Использовано трафика:</b>\n"
+        f"{traffic_detail_str}\n"
+        f"<code>{progress_bar}</code>\n\n"
+        f"⚙️ <i>Статистика трафика обновляется сессионно при перезапуске соединения.</i>"
+    )
+
+    from bot.keyboards.user_kb import get_cabinet_keyboard
+    await callback.message.edit_text(text=profile_html, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
