@@ -565,7 +565,7 @@ async def admin_toggle_user_block(callback: types.CallbackQuery):
         return
 
     # Вырезаем username из callback_data кнопки
-    target_username = callback.data.split(":")
+    target_username = callback.data.split(":")[1]
 
     await callback.answer("⚙️ Изменяю статус доступа...")
 
