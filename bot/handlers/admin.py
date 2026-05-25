@@ -7,7 +7,8 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from core.auth import ADMIN_IDS
-
+from sqlalchemy import func, select
+from core.init_api import api
 from core.database import async_session
 from core.models import User
 from bot.states import AdminPromoStates
@@ -38,6 +39,10 @@ def _save_promocodes(data: dict):
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
+# ==========================================
+#      БЛОК 1: ВХОД В АДМИНКУ
+# ==========================================
+
 # Вход в админку по команде /admin
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
@@ -47,6 +52,10 @@ async def cmd_admin(message: types.Message):
     text = "⚙️ <b>Панель администратора VPN</b>\n\nВыберите необходимое действие:"
     await message.answer(text=text, reply_markup=get_admin_main_keyboard(), parse_mode="HTML")
 
+
+# ==========================================
+#      БЛОК 2: РАБОТА С ПРОМОКОДАМИ
+# ==========================================
 
 # Генерация промокода: Шаг 1 (Запрос времени жизни самого промокода)
 @router.callback_query(F.data == "admin_gen_promo")
@@ -111,7 +120,7 @@ async def admin_process_promo_days(message: types.Message, state: FSMContext):
 
     # Возвращаем меню админа кнопкой под сообщением
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="⚙️ В админку", callback_data="admin_back")]
+        [types.InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_back")]
     ])
     await message.answer(text=success_text, reply_markup=kb, parse_mode="HTML")
 
@@ -137,6 +146,10 @@ async def admin_view_promos(callback: types.CallbackQuery):
     await callback.message.edit_text(text=text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
+
+# ==========================================
+#      БЛОК : ВОЗВРАТ В АДМИНКУ
+# ==========================================
 
 # Возврат в главное меню админки
 @router.callback_query(F.data == "admin_back")
