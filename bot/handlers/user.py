@@ -304,8 +304,7 @@ async def handle_get_sub_link(callback: types.CallbackQuery):
             days_to_grant = max(1, remaining_time.days)
 
         # Пересоздаем клиента в панели 3x-ui
-        new_vpn_data = api.add_user(username=db_user_username, remark=target_inbound, days=days_to_grant,
-                                    telegram_id=tg_id)
+        new_vpn_data = api.add_user(username=db_user_username, remark=target_inbound, days=days_to_grant)
 
         if new_vpn_data:
             async with async_session() as session:
@@ -313,7 +312,7 @@ async def handle_get_sub_link(callback: types.CallbackQuery):
                 res = await session.execute(query)
                 u = res.scalar_one()
                 u.vpn_uuid = new_vpn_data.get("uuid")
-                u.vpn_sub_id = new_vpn_data.get("sub_id", new_vpn_data.get("subId"))
+                u.vpn_sub_id = new_vpn_data.get("subid", new_vpn_data.get("subId"))
                 u.vpn_inbound_remark = target_inbound
                 await session.commit()
 
@@ -382,8 +381,7 @@ async def handle_get_vless_link(callback: types.CallbackQuery):
             remaining_time = db_user.expiry_date.replace(tzinfo=timezone.utc) - now
             days_to_grant = max(1, remaining_time.days)
 
-        new_vpn_data = api.add_user(username=db_user_username, remark=target_inbound, days=days_to_grant,
-                                    telegram_id=tg_id)
+        new_vpn_data = api.add_user(username=db_user_username, remark=target_inbound, days=days_to_grant)
 
         if new_vpn_data:
             async with async_session() as session:
@@ -391,7 +389,7 @@ async def handle_get_vless_link(callback: types.CallbackQuery):
                 res = await session.execute(query)
                 u = res.scalar_one()
                 u.vpn_uuid = new_vpn_data.get("uuid")
-                u.vpn_sub_id = new_vpn_data.get("sub_id", new_vpn_data.get("subId"))
+                u.vpn_sub_id = new_vpn_data.get("subid", new_vpn_data.get("subId"))
                 u.vpn_inbound_remark = target_inbound
                 await session.commit()
 
