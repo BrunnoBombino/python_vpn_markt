@@ -272,34 +272,40 @@ async def handle_get_sub_link(callback: types.CallbackQuery):
         await callback.message.answer("❌ Аккаунт не найден.")
         return
 
-    # Проверяем подписку
     if not await _is_subscription_active(db_user):
         text = "⚠️ <b>Доступ ограничен</b>\n\nУ вас нет активной подписки. Пожалуйста, приобретите тариф."
         await callback.message.edit_text(text=text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
         return
 
-    await callback.answer("⏳ Генерирую ссылку подписки...")
+    await callback.answer("⏳ Проверяю статус ссылки...")
 
-    # === СИНХРОНИЗАЦИЯ С БАЗОЙ ДАННЫХ ДЛЯ НОВОГО КЛИЕНТА В ПАНЕЛИ ===
-    if not db_user.vpn_uuid or not db_user.vpn_sub_id:
-        # 1. Определяем инбаунд: берем из БД, либо "limit" если поле пустое
-        target_inbound = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "limit"
+    # Переменная для отслеживания: нужно ли принудительно создать юзера в панели
+    need_to_create = not db_user.vpn_uuid or not db_user.vpn_sub_id
+    db_user_username = db_user.username
 
-        # 2. Рассчитываем дни: сколько дней осталось от текущего момента до expiry_date
+    # ПЕРВАЯ ПОПЫТКА: Если ключи в БД есть, пробуем получить ссылку подписки
+    sub_link = None
+    if not need_to_create:
+        sub_link = api.get_subscription_link(db_user_username)
+        # Если панель вернула None — значит, пользователя удалили из 3x-ui вручную!
+        if sub_link is None:
+            print(f"⚠️ Пользователь {db_user_username} удален из панели, запускаю автовосстановление...")
+            need_to_create = True
+
+    # БЛОК СОЗДАНИЯ / АВТОМАТИЧЕСКОГО ВОССТАНОВЛЕНИЯ В ПАНЕЛИ
+    if need_to_create:
+        target_inbound = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "Limit"
+
         if target_inbound.upper() == "VIP" or db_user.expiry_date is None:
-            days_to_grant = 36500  # Для VIP/безлимита даем 100 лет (в API сработает сброс в 0)
+            days_to_grant = 36500
         else:
             now = datetime.now(timezone.utc)
             remaining_time = db_user.expiry_date.replace(tzinfo=timezone.utc) - now
-            days_to_grant = max(1, remaining_time.days)  # Минимум 1 день, чтобы API не выдало ошибку
+            days_to_grant = max(1, remaining_time.days)
 
-        # Создаем пользователя в 3x-ui со СТРОГО ЕГО данными из базы
-        new_vpn_data = api.add_user(
-            username=db_user.username,
-            remark=target_inbound,
-            days=days_to_grant,
-            telegram_id=tg_id
-        )
+        # Пересоздаем клиента в панели 3x-ui
+        new_vpn_data = api.add_user(username=db_user_username, remark=target_inbound, days=days_to_grant,
+                                    telegram_id=tg_id)
 
         if new_vpn_data:
             async with async_session() as session:
@@ -310,20 +316,23 @@ async def handle_get_sub_link(callback: types.CallbackQuery):
                 u.vpn_sub_id = new_vpn_data.get("sub_id", new_vpn_data.get("subId"))
                 u.vpn_inbound_remark = target_inbound
                 await session.commit()
-            # Перечитываем обновленный subId
-            db_user_username = db_user.username
-        else:
-            await callback.message.edit_text("❌ Ошибка синхронизации ключей с серверов VPN.",
-                                             reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
-            return
-    else:
-        db_user_username = db_user.username
 
-    # Получаем чистый HTTPS URL подписки
-    sub_link = api.get_subscription_link(db_user_username)
+            # Пробуем получить ссылку ПОДПИСКИ ВТОРОЙ РАЗ (теперь она 100% сгенерируется)
+            sub_link = api.get_subscription_link(db_user_username)
+        else:
+            await callback.message.edit_text(
+                "❌ Ошибка автовосстановления ключей на сервере VPN. Обратитесь в поддержку.",
+                reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
+            return
+
+    # Защитная проверка на случай тотального сбоя панели
+    if not sub_link:
+        await callback.message.edit_text("❌ Сбой генерации подписки. Попробуйте позже.",
+                                         reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
+        return
 
     success_text = (
-        f"🔄 <b>Ваша ссылка-подписка готовa!</b>\n\n"
+        f"🔄 <b>Ваша ссылка-подписка готова!</b>\n\n"
         f"<code>{sub_link}</code>\n\n"
         f"👇 <i>Нажмите на текст выше, чтобы скопировать. Настройка для <b>Hiddifi / Streisand</b>.</i>"
     )
@@ -345,14 +354,25 @@ async def handle_get_vless_link(callback: types.CallbackQuery):
         return
 
     if not await _is_subscription_active(db_user):
-        text = "⚠️ <b>Доступ ограничен</b>\n\nУ вас нет active-подписки. Пожалуйста, приобретите тариф."
+        text = "⚠️ <b>Доступ ограничен</b>\n\nУ вас нет активной подписки. Пожалуйста, приобретите тариф."
         await callback.message.edit_text(text=text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
         return
 
-    await callback.answer("⏳ Генерирую прямой VLESS ключ...")
+    await callback.answer("⏳ Проверяю статус ключа...")
 
-    # === СИНХРОНИЗАЦИЯ С БАЗОЙ ДАННЫХ ДЛЯ НОВОГО КЛИЕНТА В ПАНЕЛИ ===
-    if not db_user.vpn_uuid:
+    need_to_create = not db_user.vpn_uuid
+    db_user_username = db_user.username
+
+    # ПЕРВАЯ ПОПЫТКА: Проверяем, отдается ли прямой ключ
+    vless_link = None
+    if not need_to_create:
+        vless_link = api.get_client_link(db_user_username)
+        if vless_link is None:
+            print(f"⚠️ Пользователь {db_user_username} удален из панели, запускаю автовосстановление для VLESS...")
+            need_to_create = True
+
+    # БЛОК АВТОМАТИЧЕСКОГО ВОССТАНОВЛЕНИЯ В ПАНЕЛИ
+    if need_to_create:
         target_inbound = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "limit"
 
         if target_inbound.upper() == "VIP" or db_user.expiry_date is None:
@@ -362,12 +382,8 @@ async def handle_get_vless_link(callback: types.CallbackQuery):
             remaining_time = db_user.expiry_date.replace(tzinfo=timezone.utc) - now
             days_to_grant = max(1, remaining_time.days)
 
-        new_vpn_data = api.add_user(
-            username=db_user.username,
-            remark=target_inbound,
-            days=days_to_grant,
-            telegram_id=tg_id
-        )
+        new_vpn_data = api.add_user(username=db_user_username, remark=target_inbound, days=days_to_grant,
+                                    telegram_id=tg_id)
 
         if new_vpn_data:
             async with async_session() as session:
@@ -378,16 +394,19 @@ async def handle_get_vless_link(callback: types.CallbackQuery):
                 u.vpn_sub_id = new_vpn_data.get("sub_id", new_vpn_data.get("subId"))
                 u.vpn_inbound_remark = target_inbound
                 await session.commit()
-            db_user_username = db_user.username
-        else:
-            await callback.message.edit_text("❌ Ошибка синхронизации ключей с сервером VPN.",
-                                             reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
-            return
-    else:
-        db_user_username = db_user.username
 
-    # Получаем прямую vless://... строку
-    vless_link = api.get_client_link(db_user_username)
+            # Пробуем получить ключ ВТОРОЙ РАЗ после пересоздания
+            vless_link = api.get_client_link(db_user_username)
+        else:
+            await callback.message.edit_text(
+                "❌ Ошибка автовосстановления ключей на сервере VPN. Обратитесь в поддержку.",
+                reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
+            return
+
+    if not vless_link:
+        await callback.message.edit_text("❌ Сбой генерации ключа VLESS. Попробуйте позже.",
+                                         reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
+        return
 
     success_text = (
         f"🔑 <b>Ваш прямой VLESS ключ готов!</b>\n\n"
