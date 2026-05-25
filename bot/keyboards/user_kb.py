@@ -15,9 +15,19 @@ def get_cabinet_keyboard() -> InlineKeyboardMarkup:
     """Интерфейс внутри личного кабинета"""
     buttons = [
         [InlineKeyboardButton(text="📊 Информация об аккаунте", callback_data="user_profile")],
+        [InlineKeyboardButton(text="🚀 Получить VPN ссылки", callback_data="choose_link_type")],
         [InlineKeyboardButton(text="💳 Покупка / Продление подписки", callback_data="buy_menu")],
         [InlineKeyboardButton(text="❓ Помощь по подключению", callback_data="help_info")],
         [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_link_choice_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора типа ссылки для подключения"""
+    buttons = [
+        [InlineKeyboardButton(text="🔄 Ссылка-Подписка (Hiddifi / Streisand)", callback_data="get_link_sub")],
+        [InlineKeyboardButton(text="🔑 Прямой VLESS ключ (Amnezia / v2rayNG)", callback_data="get_link_vless")],
+        [InlineKeyboardButton(text="⬅️ Назад в кабинет", callback_data="open_cabinet")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
