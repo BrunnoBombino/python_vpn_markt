@@ -272,7 +272,7 @@ async def handle_get_sub_link(callback: types.CallbackQuery):
         await callback.message.answer("❌ Аккаунт не найден.")
         return
 
-    # Проверяем подписку через нашу новую функцию
+    # Проверяем подписку
     if not await _is_subscription_active(db_user):
         text = "⚠️ <b>Доступ ограничен</b>\n\nУ вас нет активной подписки. Пожалуйста, приобретите тариф."
         await callback.message.edit_text(text=text, reply_markup=get_cabinet_keyboard(), parse_mode="HTML")
@@ -280,10 +280,26 @@ async def handle_get_sub_link(callback: types.CallbackQuery):
 
     await callback.answer("⏳ Генерирую ссылку подписки...")
 
-    # Если пользователя еще нет на сервере 3x-ui — создаем его в дефолтном "limit"
+    # === СИНХРОНИЗАЦИЯ С БАЗОЙ ДАННЫХ ДЛЯ НОВОГО КЛИЕНТА В ПАНЕЛИ ===
     if not db_user.vpn_uuid or not db_user.vpn_sub_id:
-        target_inbound = "limit"
-        new_vpn_data = api.add_user(username=db_user.username, remark=target_inbound, days=30, telegram_id=tg_id)
+        # 1. Определяем инбаунд: берем из БД, либо "limit" если поле пустое
+        target_inbound = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "limit"
+
+        # 2. Рассчитываем дни: сколько дней осталось от текущего момента до expiry_date
+        if target_inbound.upper() == "VIP" or db_user.expiry_date is None:
+            days_to_grant = 36500  # Для VIP/безлимита даем 100 лет (в API сработает сброс в 0)
+        else:
+            now = datetime.now(timezone.utc)
+            remaining_time = db_user.expiry_date.replace(tzinfo=timezone.utc) - now
+            days_to_grant = max(1, remaining_time.days)  # Минимум 1 день, чтобы API не выдало ошибку
+
+        # Создаем пользователя в 3x-ui со СТРОГО ЕГО данными из базы
+        new_vpn_data = api.add_user(
+            username=db_user.username,
+            remark=target_inbound,
+            days=days_to_grant,
+            telegram_id=tg_id
+        )
 
         if new_vpn_data:
             async with async_session() as session:
@@ -297,8 +313,8 @@ async def handle_get_sub_link(callback: types.CallbackQuery):
             # Перечитываем обновленный subId
             db_user_username = db_user.username
         else:
-            await callback.message.edit_text("❌ Ошибка генерации ключей на сервере VPN.",
-                                             reply_markup=get_link_choice_keyboard())
+            await callback.message.edit_text("❌ Ошибка синхронизации ключей с серверов VPN.",
+                                             reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
             return
     else:
         db_user_username = db_user.username
@@ -335,10 +351,23 @@ async def handle_get_vless_link(callback: types.CallbackQuery):
 
     await callback.answer("⏳ Генерирую прямой VLESS ключ...")
 
-    # Если пользователя еще нет на сервере 3x-ui — создаем
+    # === СИНХРОНИЗАЦИЯ С БАЗОЙ ДАННЫХ ДЛЯ НОВОГО КЛИЕНТА В ПАНЕЛИ ===
     if not db_user.vpn_uuid:
-        target_inbound = "limit"
-        new_vpn_data = api.add_user(username=db_user.username, remark=target_inbound, days=30, telegram_id=tg_id)
+        target_inbound = db_user.vpn_inbound_remark if db_user.vpn_inbound_remark else "limit"
+
+        if target_inbound.upper() == "VIP" or db_user.expiry_date is None:
+            days_to_grant = 36500
+        else:
+            now = datetime.now(timezone.utc)
+            remaining_time = db_user.expiry_date.replace(tzinfo=timezone.utc) - now
+            days_to_grant = max(1, remaining_time.days)
+
+        new_vpn_data = api.add_user(
+            username=db_user.username,
+            remark=target_inbound,
+            days=days_to_grant,
+            telegram_id=tg_id
+        )
 
         if new_vpn_data:
             async with async_session() as session:
@@ -351,13 +380,13 @@ async def handle_get_vless_link(callback: types.CallbackQuery):
                 await session.commit()
             db_user_username = db_user.username
         else:
-            await callback.message.edit_text("❌ Ошибка генерации ключей на сервере VPN.",
-                                             reply_markup=get_link_choice_keyboard())
+            await callback.message.edit_text("❌ Ошибка синхронизации ключей с сервером VPN.",
+                                             reply_markup=get_link_choice_keyboard(), parse_mode="HTML")
             return
     else:
         db_user_username = db_user.username
 
-    # Получаем прямую vless://... строку, используя метод, который мы детально отлаживали символ в символ
+    # Получаем прямую vless://... строку
     vless_link = api.get_client_link(db_user_username)
 
     success_text = (
