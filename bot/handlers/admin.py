@@ -238,7 +238,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
                 f"│ ├ Тариф VIP: <code>{vip_in_this_inbound} чел.</code>\n"
                 f"│ └ Ручное добавление: <code>{manual_in_this_inbound} чел.</code>\n"
                 f"└ Трафик порта: <code>{inbound_gb} ГБ</code>\n"
-                f"─────────────────\n"
+                f"──────────────────\n"
             )
     else:
         inbounds_stats_text = "❌ <i>Не удалось получить данные из панели 3x-ui</i>\n\n"
@@ -261,7 +261,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
         f"├ Активных сессий на сервере: <code>{global_active_clients}</code>\n"
         f"└ Суммарный трафик сервера: {global_traffic_formatted}\n\n"
         f"📈 <b>Детализация по подключениям:</b>\n"
-        f"─────────────────\n"
+        f"──────────────────\n"
         f"{inbounds_stats_text}"
         f"🕒 <i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>"
     )
@@ -281,7 +281,7 @@ async def admin_view_server_stats(callback: types.CallbackQuery):
         f"├ Активных сессий на сервере: <code>{global_active_clients}</code>\n"
         f"└ Суммарный трафик сервера: {global_traffic_formatted}\n\n"
         f"📈 <b>Детализация по подключениям:</b>\n"
-        f"─────────────────\n"
+        f"──────────────────\n"
         f"{inbounds_stats_text}"
         f"🕒 <i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>"
     )
